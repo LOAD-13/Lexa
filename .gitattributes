@@ -1,0 +1,11 @@
+# Normaliza los finales de línea: LF en el repositorio, nativos al trabajar.
+* text=auto eol=lf
+
+# Windows necesita CRLF en los scripts .bat o no se ejecutan bien.
+*.bat text eol=crlf
+
+# Binarios: nunca convertir.
+*.png binary
+*.ico binary
+*.ttf binary
+*.otf binary

@@ -1,0 +1,95 @@
+# ─────────────────────────────────────────────────────────────
+# Python
+# ─────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Entornos virtuales
+.venv/
+venv/
+env/
+ENV/
+
+# ─────────────────────────────────────────────────────────────
+# Compilación con PyInstaller
+# La carpeta dist/ pesa ~500 MB: se genera con build.bat, nunca se sube.
+# ─────────────────────────────────────────────────────────────
+build/
+dist/
+*.spec
+*.manifest
+
+# ─────────────────────────────────────────────────────────────
+# Herramientas de IA y editores
+# ─────────────────────────────────────────────────────────────
+.claude/
+.cursor/
+.aider*
+.github/copilot-instructions.md
+CLAUDE.md
+AGENTS.md
+
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# ─────────────────────────────────────────────────────────────
+# Archivos locales de la aplicación
+# Los modelos y la configuración viven en %LOCALAPPDATA% y %APPDATA%,
+# fuera del repo, pero por si acaso se ejecuta desde otra ruta:
+# ─────────────────────────────────────────────────────────────
+lexa_error.log
+error.log
+*.log
+config.json
+models/
+
+# Resultados de pruebas
+salida/
+output/
+pruebas/
+test_output/
+*.srt
+*.vtt
+
+# ─────────────────────────────────────────────────────────────
+# Sistema operativo
+# ─────────────────────────────────────────────────────────────
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+.DS_Store
+._*
+
+# ─────────────────────────────────────────────────────────────
+# Multimedia de prueba
+# Evita subir por error un audio o video personal al hacer `git add -A`.
+# Si alguna vez quieres versionar una muestra, fuérzalo con:
+#   git add -f ejemplos/muestra.mp3
+# ─────────────────────────────────────────────────────────────
+*.mp3
+*.wav
+*.m4a
+*.ogg
+*.flac
+*.aac
+*.opus
+*.wma
+*.mp4
+*.mkv
+*.avi
+*.mov
+*.webm
+*.wmv
+
+# Documentos de prueba (el icono y las fuentes sí se versionan)
+*.pdf
+*.docx
