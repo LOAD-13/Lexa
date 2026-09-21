@@ -127,6 +127,23 @@ QComboBox::down-arrow {{
     border-top: 5px solid {MUTED};
     margin-right: 6px;
 }}
+/* Campo de texto: mismas medidas que el ComboBox para que alineen */
+QLineEdit {{
+    background: {PANEL2};
+    border: 1px solid {LINE};
+    border-radius: {R_SM}px;
+    color: {FG};
+    padding: 4px 10px;
+    font-size: 12px;
+    min-height: 26px;
+    selection-background-color: {ACCENT_SOFT};
+}}
+QLineEdit:hover {{
+    border-color: {MUTED};
+}}
+QLineEdit:focus {{
+    border-color: {ACCENT_LINE};
+}}
 QComboBox QAbstractItemView {{
     background: {ELEV};
     border: 1px solid {LINE};

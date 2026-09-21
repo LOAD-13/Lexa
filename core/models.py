@@ -4,6 +4,7 @@ from dataclasses import dataclass, field, asdict
 from enum import Enum
 from typing import Optional, List
 import os
+import re
 
 from core.paths import default_output_dir
 
@@ -111,12 +112,37 @@ LANGUAGES: list[tuple[str, str]] = [
 
 EXPORT_FORMATS = ("txt", "md", "pdf", "docx", "srt", "vtt")
 
+# Tope del diccionario de terminos. faster-whisper recorta los hotwords a la
+# mitad del contexto del modelo (~223 tokens); pasarse no da error, solo hace
+# que se pierdan en silencio los ultimos terminos. Se corta antes y por palabra
+# entera para que el usuario no acabe con un termino partido a la mitad.
+VOCABULARY_MAX_CHARS = 400
+
+
+def normalize_vocabulary(text: str) -> str:
+    """Deja el diccionario en una linea de terminos separados por comas."""
+    if not text:
+        return ""
+    terms = [t.strip(" \t\r\n,;") for t in re.split(r"[,;\n\r]+", text)]
+    terms = [t for t in terms if t]
+
+    out: list[str] = []
+    used = 0
+    for term in terms:
+        extra = len(term) + (2 if out else 0)
+        if used + extra > VOCABULARY_MAX_CHARS:
+            break
+        out.append(term)
+        used += extra
+    return ", ".join(out)
+
 
 @dataclass
 class AppConfig:
     transcribe_audio: bool = True
     ocr_images: bool = True
     language: str = "es"                      # codigo ISO o "auto"
+    vocabulary: str = ""                      # terminos propios del audio
     whisper_model: str = "large-v3-turbo"
     export_format: str = "txt"
     output_mode: str = "per-file"             # per-file | merged
@@ -157,6 +183,7 @@ class AppConfig:
             self.output_mode = "per-file"
         if not self.save_location:
             self.save_location = default_output_dir()
+        self.vocabulary = normalize_vocabulary(self.vocabulary)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

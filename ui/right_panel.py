@@ -8,11 +8,14 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QLabel,
+    QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
     QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
-from core.models import AppConfig, LANGUAGES, WHISPER_MODELS
+from core.models import (
+    AppConfig, LANGUAGES, VOCABULARY_MAX_CHARS, WHISPER_MODELS,
+    normalize_vocabulary,
+)
 from ui import theme as T
 from ui.widgets import (
     FormatChip, Panel, RadioOption, SectionLabel,
@@ -102,6 +105,19 @@ class RightPanel(QWidget):
         self._lang_combo.currentIndexChanged.connect(self._on_lang_change)
         panel.layout().addWidget(
             _stacked_setting("Idioma", "Del contenido, no de la app", self._lang_combo)
+        )
+        panel.layout().addWidget(hdivider())
+
+        # editingFinished y no textChanged: guardar en cada tecla normalizaria
+        # el texto mientras se escribe y movería el cursor de sitio.
+        self._vocab_edit = QLineEdit(cfg.vocabulary)
+        self._vocab_edit.setPlaceholderText("Turnitin, UTP, nombres propios…")
+        self._vocab_edit.setMaxLength(VOCABULARY_MAX_CHARS)
+        self._vocab_edit.editingFinished.connect(self._on_vocab_change)
+        panel.layout().addWidget(
+            _stacked_setting("Palabras del audio",
+                             "Nombres y términos que el modelo suele escribir mal",
+                             self._vocab_edit)
         )
         panel.layout().addWidget(hdivider())
 
@@ -293,6 +309,14 @@ class RightPanel(QWidget):
 
     def _on_lang_change(self, _index: int) -> None:
         self._config.language = self._lang_combo.currentData()
+        self._emit()
+
+    def _on_vocab_change(self) -> None:
+        self._config.vocabulary = normalize_vocabulary(self._vocab_edit.text())
+        # El texto se devuelve normalizado para que se vea lo que se guardo:
+        # si un termino se cayo por pasarse del tope, tiene que notarse.
+        if self._vocab_edit.text() != self._config.vocabulary:
+            self._vocab_edit.setText(self._config.vocabulary)
         self._emit()
 
     def _on_model_change(self, _index: int) -> None:
