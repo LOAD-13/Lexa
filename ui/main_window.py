@@ -28,7 +28,8 @@ from ui.center_panel import CenterPanel
 from ui.right_panel import RightPanel
 from ui.footer import Footer
 from ui.tour import TourOverlay, build_steps
-from ui.update_banner import UpdateBanner, UpdateCheckThread
+from ui.update_banner import UpdateBanner, UpdateCheckThread, UpdateDownloadThread
+from ui.update_dialog import UpdateDialog
 
 
 class MainWindow(QMainWindow):
@@ -42,6 +43,8 @@ class MainWindow(QMainWindow):
         self._tour: Optional[TourOverlay] = None
         self._last_export: List[str] = []
         self._update_thread: Optional[UpdateCheckThread] = None
+        self._download_thread: Optional[UpdateDownloadThread] = None
+        self._pending_update = None
 
         self.setWindowTitle("Lexa")
         # Mínimo holgado: por debajo de esto los paneles dejan de ser legibles,
@@ -111,6 +114,11 @@ class MainWindow(QMainWindow):
         self._v_splitter.setSizes([640, 150])
         root.addWidget(self._v_splitter, stretch=1)
 
+        self._update_dialog = UpdateDialog(root_widget)
+        self._update_dialog.accepted.connect(self._start_download)
+        self._update_dialog.restart.connect(self._restart)
+        self._update_dialog.dismissed.connect(self._on_update_dismissed)
+
         self._connect()
         self._restore_layout()
 
@@ -170,6 +178,8 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
         if self._tour is not None and self._tour.isVisible():
             self._tour.setGeometry(self.centralWidget().rect())
+        if self._update_dialog.isVisible():
+            self._update_dialog.setGeometry(self.centralWidget().rect())
 
     # -- Actualizaciones ------------------------------------------------------
     def check_for_updates(self) -> None:
@@ -187,8 +197,39 @@ class MainWindow(QMainWindow):
         self._update_thread.start()
 
     def _on_update_found(self, update) -> None:
-        self._banner.show_update(update)
+        self._pending_update = update
         self._log("info", f"Lexa {update.version} disponible ({update.size_str})")
+        # Mientras se procesa no se interrumpe: la pantalla tapa la cola entera
+        # y el usuario esta mirando como avanza su trabajo. Queda el aviso de
+        # la barra y se le ensena al terminar.
+        if self._processing:
+            self._banner.show_update(update)
+        else:
+            self._update_dialog.show_update(update)
+
+    def _start_download(self) -> None:
+        if self._pending_update is None:
+            return
+        self._update_dialog.show_downloading()
+        self._download_thread = UpdateDownloadThread(self._pending_update, self)
+        self._download_thread.progress.connect(self._update_dialog.set_progress)
+        self._download_thread.finished_ok.connect(self._on_download_ready)
+        self._download_thread.failed.connect(self._on_download_failed)
+        self._download_thread.start()
+
+    def _on_download_ready(self) -> None:
+        self._update_dialog.show_ready()
+        self._log("ok", "Actualización descargada, lista para instalar")
+
+    def _on_download_failed(self, mensaje: str) -> None:
+        self._update_dialog.show_error(mensaje)
+        self._log("err", f"Actualización: {mensaje.splitlines()[0]}")
+
+    def _on_update_dismissed(self) -> None:
+        # Se deja el aviso pequeno: quien dijo «mas tarde» no deberia tener que
+        # reiniciar la aplicacion para volver a encontrarlo.
+        if self._pending_update is not None:
+            self._banner.show_update(self._pending_update)
 
     def announce_update_applied(self) -> None:
         from core.version import VERSION
