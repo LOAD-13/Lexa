@@ -323,19 +323,25 @@ def _tour_btn(label: str, kind: str):
     return btn
 
 
+_AVATAR_SIZE = 30
+_AVATAR_INSET = 5     # aire entre el borde del circulo y el icono
+_AVATAR_SCALE = 4     # se guarda a 4x para que no pixele en pantallas escaladas
+
+
 class _Avatar(QWidget):
-    """Icono de la app dentro de un circulo, o una «L» si el icono no está."""
+    """Icono de la app centrado sobre un circulo blanco, o una «L» si falta."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedSize(30, 30)
+        self.setFixedSize(_AVATAR_SIZE, _AVATAR_SIZE)
         self._pixmap: QPixmap | None = None
         path = resource("icon.png")
         if os.path.isfile(path):
             pix = QPixmap(path)
             if not pix.isNull():
+                side = (_AVATAR_SIZE - 2 * _AVATAR_INSET) * _AVATAR_SCALE
                 self._pixmap = pix.scaled(
-                    60, 60,
+                    side, side,
                     Qt.AspectRatioMode.KeepAspectRatio,
                     Qt.TransformationMode.SmoothTransformation,
                 )
@@ -345,23 +351,33 @@ class _Avatar(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
 
+        # Circulo blanco: el icono tiene trazos oscuros y sobre el panel casi
+        # negro apenas se distinguian.
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(QColor("#ffffff")))
+        p.drawEllipse(0, 0, _AVATAR_SIZE, _AVATAR_SIZE)
+
         if self._pixmap is not None:
-            clip = QPainterPath()
-            clip.addEllipse(QRectF(0, 0, 30, 30))
-            p.setClipPath(clip)
-            p.drawPixmap(0, 0, 30, 30, self._pixmap)
+            # Encajado dentro del circulo y centrado, respetando la proporcion.
+            # Antes se estiraba a 30x30 de borde a borde y el recorte circular
+            # le cortaba la parte de arriba y la de abajo.
+            w = self._pixmap.width() / _AVATAR_SCALE
+            h = self._pixmap.height() / _AVATAR_SCALE
+            p.drawPixmap(
+                QRectF((_AVATAR_SIZE - w) / 2, (_AVATAR_SIZE - h) / 2, w, h),
+                self._pixmap,
+                QRectF(self._pixmap.rect()),
+            )
             p.end()
             return
 
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QBrush(QColor(T.ACCENT)))
-        p.drawEllipse(0, 0, 30, 30)
-        p.setPen(QColor(T.ACCENT_TEXT))
+        p.setPen(QColor(T.BG))
         font = QFont()
         font.setPointSize(12)
         font.setWeight(QFont.Weight.Bold)
         p.setFont(font)
-        p.drawText(0, 0, 30, 30, Qt.AlignmentFlag.AlignCenter, "L")
+        p.drawText(0, 0, _AVATAR_SIZE, _AVATAR_SIZE,
+                   Qt.AlignmentFlag.AlignCenter, "L")
         p.end()
 
 
@@ -402,7 +418,10 @@ def build_steps(window) -> List[TourStep]:
             body=(
                 "El modelo Turbo es el equilibrio recomendado entre velocidad y "
                 "precisión. Si activas «Identificar hablantes» separaré la "
-                "conversación por persona, aunque tardaré un poco más."
+                "conversación por persona, aunque tardaré un poco más.\n\n"
+                "En «Palabras del audio» escribe los nombres y términos que "
+                "suelo escribir mal: apellidos, marcas, jerga de tu carrera. "
+                "Con eso delante los acierto."
             ),
             target=lambda: window._right.processing_panel,
             padding=6,
@@ -427,12 +446,27 @@ def build_steps(window) -> List[TourStep]:
             padding=8,
         ),
         TourStep(
-            title="6. Lee y copia el resultado",
+            title="6. Vigila el avance aquí abajo",
+            body=(
+                "El ritmo muestra cuánto audio proceso por segundo: 2.4x quiere "
+                "decir que en un segundo avanzo 2,4 de grabación. Sube y baja "
+                "según lo denso que venga el audio.\n\n"
+                "En el registro aviso de lo que encuentro: si la grabación tiene "
+                "poca voz o el micrófono estaba lejos, y si descarto frases que "
+                "me inventé sobre el silencio."
+            ),
+            target=lambda: window._footer,
+            padding=4,
+        ),
+        TourStep(
+            title="7. Lee y copia el resultado",
             body=(
                 "El texto aparece aquí a medida que termino cada archivo. Puedes "
                 "verlo formateado en párrafos, como texto plano o en JSON, y "
-                "copiarlo con un clic.\n\nSi necesitas verme otra vez, usa el "
-                "botón «?» de arriba a la derecha."
+                "copiarlo con un clic.\n\nSi vuelves a soltar un archivo que ya "
+                "procesé con los mismos ajustes, te devuelvo el resultado al "
+                "instante en vez de repetir el trabajo.\n\nSi necesitas verme "
+                "otra vez, usa el botón «?» de arriba a la derecha."
             ),
             target=lambda: window._center,
             padding=4,
