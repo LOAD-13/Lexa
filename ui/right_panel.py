@@ -206,7 +206,7 @@ class RightPanel(QWidget):
         loc_btn.setFixedHeight(25)
         loc_btn.clicked.connect(self._choose_location)
         self._loc_row = SettingRow(
-            "Carpeta de guardado", _short_path(cfg.save_location), loc_btn
+            "Carpeta de guardado", self._location_label(), loc_btn
         )
         panel.layout().addWidget(self._loc_row)
         panel.layout().addWidget(self._loc_row.separator())
@@ -347,13 +347,23 @@ class RightPanel(QWidget):
         self._config.auto_export = value
         self._emit()
 
+    def _location_label(self) -> str:
+        if self._config.save_next_to_source:
+            return "Junto al archivo original"
+        return _short_path(self._config.save_location)
+
     def _choose_location(self) -> None:
+        inicio = (self._config.save_location if not self._config.save_next_to_source
+                  else self._config.save_location)
         folder = QFileDialog.getExistingDirectory(
-            self, "Elegir carpeta de guardado", self._config.save_location
+            self, "Elegir carpeta de guardado", inicio
         )
         if folder:
+            # Elegir carpeta a mano es justo la senal de que no se quiere el
+            # modo automatico; si no, no habria hecho falta elegirla.
             self._config.save_location = folder
-            self._loc_row.set_sub(_short_path(folder))
+            self._config.save_next_to_source = False
+            self._loc_row.set_sub(self._location_label())
             self._emit()
 
     @staticmethod

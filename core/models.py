@@ -149,6 +149,10 @@ class AppConfig:
     include_timestamps: bool = False
     include_speakers: bool = False            # diarizacion
     auto_export: bool = True                  # guardar al terminar el lote
+    # Por defecto el resultado se deja junto al archivo de origen: es donde lo
+    # busca quien acaba de arrastrar un audio, y evita tener que recordar una
+    # carpeta comun. Elegir carpeta a mano desactiva este modo.
+    save_next_to_source: bool = True
     save_location: str = field(default_factory=default_output_dir)
 
     # Estado de la interfaz (persistido, no editable desde los ajustes)

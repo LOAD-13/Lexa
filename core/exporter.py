@@ -37,7 +37,36 @@ def export_results(items: List[FileItem], config: AppConfig) -> List[str]:
             "No hay resultados para exportar.\n\nProcesa los archivos primero."
         )
 
-    out_dir = config.save_location
+    # Los subtitulos siempre van uno por archivo: un SRT combinado no tiene sentido.
+    merged = config.output_mode == "merged" and config.export_format not in SUBTITLE_FORMATS
+
+    if merged:
+        # Un documento combinado no tiene un origen unico: se deja junto al
+        # primer archivo del lote, que es el que abre la tanda.
+        return [_export_merged(done, config, _ensure_dir(output_dir_for(done[0], config)))]
+
+    return [_export_single(item, config, _ensure_dir(output_dir_for(item, config)))
+            for item in done]
+
+
+def output_dir_for(item: FileItem, config: AppConfig) -> str:
+    """Carpeta donde dejar el resultado de ese archivo.
+
+    Junto al original salvo que se haya elegido una carpeta a mano. Si el
+    origen esta en un sitio donde no se puede escribir (una unidad de solo
+    lectura, una carpeta de red sin permiso), se cae a la carpeta configurada
+    en vez de fallar y perder la transcripcion.
+    """
+    if not config.save_next_to_source:
+        return config.save_location
+
+    carpeta = os.path.dirname(os.path.abspath(item.path))
+    if os.path.isdir(carpeta) and os.access(carpeta, os.W_OK):
+        return carpeta
+    return config.save_location
+
+
+def _ensure_dir(out_dir: str) -> str:
     try:
         os.makedirs(out_dir, exist_ok=True)
     except OSError as exc:
@@ -45,13 +74,7 @@ def export_results(items: List[FileItem], config: AppConfig) -> List[str]:
             f"No se puede escribir en la carpeta de guardado:\n{out_dir}\n\n"
             f"Detalle: {exc}"
         ) from exc
-
-    # Los subtitulos siempre van uno por archivo: un SRT combinado no tiene sentido.
-    merged = config.output_mode == "merged" and config.export_format not in SUBTITLE_FORMATS
-
-    if merged:
-        return [_export_merged(done, config, out_dir)]
-    return [_export_single(item, config, out_dir) for item in done]
+    return out_dir
 
 
 # ─────────────────────────────────────────────────────────────────────────────
