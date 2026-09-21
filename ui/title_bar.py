@@ -10,6 +10,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QBrush, QLinearGradient, QFont, QPixmap, QPainterPath
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
+from core.version import VERSION
 from ui import theme as T
 from ui.widgets import make_btn
 from core.paths import resource
@@ -45,6 +46,16 @@ class TitleBar(QWidget):
             f"background: transparent; color: {T.FG}; font-size: 13px; font-weight: 600;"
         )
         row.addWidget(name_lbl)
+
+        # La version, visible pero discreta: es lo primero que se pregunta
+        # cuando alguien reporta un fallo.
+        ver_lbl = QLabel(VERSION)
+        ver_lbl.setStyleSheet(
+            f"background: transparent; color: {T.DIM}; font-size: 10.5px; "
+            f"font-family: Consolas, monospace;"
+        )
+        row.addSpacing(5)
+        row.addWidget(ver_lbl)
 
         dot = QLabel(" · ")
         dot.setStyleSheet(f"background: transparent; color: {T.DIM}; font-size: 12px;")

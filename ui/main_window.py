@@ -28,6 +28,7 @@ from ui.center_panel import CenterPanel
 from ui.right_panel import RightPanel
 from ui.footer import Footer
 from ui.tour import TourOverlay, build_steps
+from ui.update_banner import UpdateBanner, UpdateCheckThread
 
 
 class MainWindow(QMainWindow):
@@ -40,6 +41,7 @@ class MainWindow(QMainWindow):
         self._processing = False
         self._tour: Optional[TourOverlay] = None
         self._last_export: List[str] = []
+        self._update_thread: Optional[UpdateCheckThread] = None
 
         self.setWindowTitle("Lexa")
         # Mínimo holgado: por debajo de esto los paneles dejan de ser legibles,
@@ -63,6 +65,15 @@ class MainWindow(QMainWindow):
         self._title_bar = TitleBar()
         self._title_bar.help_requested.connect(self.start_tour)
         root.addWidget(self._title_bar)
+
+        self._banner = UpdateBanner()
+        self._banner.restart_requested.connect(self._restart)
+        banner_wrap = QWidget()
+        banner_wrap.setStyleSheet("background: transparent;")
+        banner_lay = QHBoxLayout(banner_wrap)
+        banner_lay.setContentsMargins(10, 6, 10, 0)
+        banner_lay.addWidget(self._banner)
+        root.addWidget(banner_wrap)
 
         # ── Tres columnas redimensionables ───────────────────────────
         self._left = LeftPanel()
@@ -160,6 +171,48 @@ class MainWindow(QMainWindow):
         if self._tour is not None and self._tour.isVisible():
             self._tour.setGeometry(self.centralWidget().rect())
 
+    # -- Actualizaciones ------------------------------------------------------
+    def check_for_updates(self) -> None:
+        """Pregunta si hay version nueva, en segundo plano y sin molestar.
+
+        Si no hay red, si GitHub no responde o si ya esta al dia, no pasa nada
+        visible: la comprobacion es un extra, no un requisito para trabajar.
+        """
+        from core.paths import is_frozen
+        if not is_frozen():
+            return          # desde el codigo fuente no hay nada que reemplazar
+
+        self._update_thread = UpdateCheckThread(self)
+        self._update_thread.found.connect(self._on_update_found)
+        self._update_thread.start()
+
+    def _on_update_found(self, update) -> None:
+        self._banner.show_update(update)
+        self._log("info", f"Lexa {update.version} disponible ({update.size_str})")
+
+    def announce_update_applied(self) -> None:
+        from core.version import VERSION
+        self._banner.show_applied(VERSION)
+        self._log("ok", f"Actualizado a Lexa {VERSION}")
+
+    def _restart(self) -> None:
+        """Cierra y vuelve a abrir para que arranque el binario nuevo."""
+        if self._processing:
+            QMessageBox.information(
+                self, "Procesamiento en curso",
+                "Espera a que termine el procesamiento antes de reiniciar.",
+            )
+            return
+        try:
+            subprocess.Popen([sys.executable], cwd=os.path.dirname(sys.executable))
+        except Exception as exc:
+            QMessageBox.warning(
+                self, "No se pudo reiniciar",
+                f"Cierra y vuelve a abrir Lexa a mano.\n\nDetalle: {exc}",
+            )
+            return
+        self.close()
+
     # ── Archivos ─────────────────────────────────────────────────────────────
     def _on_files_added(self, paths: List[str]) -> None:
         known = {f.path for f in self._files}
@@ -174,6 +227,11 @@ class MainWindow(QMainWindow):
                 skipped += 1
                 continue
             item = FileItem(id=self._next_id, path=path, kind=kind)
+            if kind.is_speech:
+                # Se lee solo la cabecera del contenedor, no se decodifica nada.
+                # Sabiendo la duracion desde el principio, la cola la muestra
+                # antes de procesar y el ritmo puede darse en tiempo real.
+                item.duration = _safe_probe(path)
             self._next_id += 1
             self._files.append(item)
             self._left.add_file(item)
@@ -468,3 +526,16 @@ class MainWindow(QMainWindow):
             self._stop_worker()
         self._save_layout()
         super().closeEvent(event)
+
+
+def _safe_probe(path: str) -> float:
+    """Duracion del archivo, o 0.0 si no se puede leer.
+
+    Un contenedor roto no debe impedir anadirlo a la cola: el error real, con
+    su mensaje, se dara al procesarlo.
+    """
+    try:
+        from core.engines.media import probe_duration
+        return probe_duration(path)
+    except Exception:
+        return 0.0

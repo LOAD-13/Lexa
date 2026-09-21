@@ -46,7 +46,23 @@ def set_windows_app_id() -> None:
         pass
 
 
+def apply_pending_update() -> bool:
+    """Termina una actualizacion descargada en la sesion anterior.
+
+    Va lo primero de todo, antes de que exista ninguna ventana: reemplaza el
+    ejecutable aprovechando que el binario viejo todavia no esta en uso en
+    este arranque. Un fallo aqui no impide usar la version instalada.
+    """
+    try:
+        from core.updater import apply_pending
+        return apply_pending()
+    except Exception:
+        return False
+
+
 def main() -> int:
+    applied = apply_pending_update()
+
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
@@ -70,7 +86,10 @@ def main() -> int:
     from ui.main_window import MainWindow
     window = MainWindow(config)
     window.show()
+    if applied:
+        window.announce_update_applied()
     window.maybe_start_tour()
+    window.check_for_updates()
 
     return app.exec()
 

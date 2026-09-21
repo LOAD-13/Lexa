@@ -7,14 +7,19 @@ Se construye en modo «onedir» a proposito: con onefile, Windows descomprime
 antes de que aparezca la ventana.
 """
 from __future__ import annotations
+import hashlib
 import os
 import shutil
 import subprocess
 import sys
+import zipfile
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 DIST = os.path.join(ROOT, "dist")
 BUILD = os.path.join(ROOT, "build")
+
+sys.path.insert(0, ROOT)
+from core.version import VERSION   # noqa: E402  (necesita ROOT en sys.path)
 
 # Modulos que PyInstaller no detecta porque se importan de forma diferida
 # dentro de funciones, para que la app arranque rapido.
@@ -138,11 +143,56 @@ def main() -> int:
 
     print(f"\n[build] Listo: {exe}")
     if freed:
+        # Sin flecha Unicode: la consola de Windows usa cp1252 y reventaba aqui,
+        # despues de una compilacion correcta, haciendo creer que habia fallado.
         print(f"[build] Podados {freed / 1024 ** 2:.0f} MB de archivos no usados "
-              f"({before / 1024 ** 2:.0f} → {after / 1024 ** 2:.0f} MB)")
+              f"({before / 1024 ** 2:.0f} -> {after / 1024 ** 2:.0f} MB)")
     print(f"[build] Tamaño de la carpeta: {after / 1024 ** 2:.0f} MB")
-    print("[build] Para distribuir, comprime la carpeta dist\\Lexa completa.")
+
+    package(app_dir)
     return 0
+
+
+def package(app_dir: str) -> None:
+    """Genera el zip de distribución y los hashes que verifica el actualizador.
+
+    Se publican dos activos por release: el .exe suelto, que es una
+    actualización de solo código de ~19 MB, y el zip completo para instalar
+    desde cero. El SHA256SUMS.txt cubre ambos; sin firma digital es la única
+    forma de comprobar que lo descargado es lo que se publicó.
+    """
+    exe = os.path.join(app_dir, "Lexa.exe")
+    zip_name = f"Lexa-{VERSION}-windows-x64.zip"
+    zip_path = os.path.join(DIST, zip_name)
+
+    print(f"[build] Comprimiendo {zip_name}…")
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
+        for root, _, files in os.walk(app_dir):
+            for name in files:
+                full = os.path.join(root, name)
+                # Dentro del zip todo cuelga de «Lexa/», para que al
+                # descomprimir salga la carpeta y no 500 archivos sueltos.
+                rel = os.path.join("Lexa", os.path.relpath(full, app_dir))
+                z.write(full, rel)
+
+    sums = os.path.join(DIST, "SHA256SUMS.txt")
+    with open(sums, "w", encoding="utf-8", newline="\n") as f:
+        for path, name in ((exe, "Lexa.exe"), (zip_path, zip_name)):
+            f.write(f"{_sha256(path)}  {name}\n")
+
+    print(f"[build] {zip_name}: {os.path.getsize(zip_path) / 1024 ** 2:.0f} MB")
+    print(f"[build] Lexa.exe:    {os.path.getsize(exe) / 1024 ** 2:.0f} MB "
+          f"(actualización de solo código)")
+    print(f"[build] Publica en la Release v{VERSION}: Lexa.exe, {zip_name} "
+          f"y SHA256SUMS.txt")
+
+
+def _sha256(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for bloque in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(bloque)
+    return h.hexdigest()
 
 
 def prune(app_dir: str) -> int:
