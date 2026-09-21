@@ -1,6 +1,7 @@
 """Lexa — transcripción de audio, video, imágenes y PDF. Punto de entrada."""
 from __future__ import annotations
 import os
+import subprocess       # se importa aqui a proposito: ver apply_pending_update
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -46,22 +47,43 @@ def set_windows_app_id() -> None:
         pass
 
 
-def apply_pending_update() -> bool:
+def apply_pending_update() -> None:
     """Termina una actualizacion descargada en la sesion anterior.
 
-    Va lo primero de todo, antes de que exista ninguna ventana: reemplaza el
-    ejecutable aprovechando que el binario viejo todavia no esta en uso en
-    este arranque. Un fallo aqui no impide usar la version instalada.
+    Va lo primero de todo, antes de que exista ninguna ventana.
+
+    Si reemplaza el binario, este proceso NO puede continuar. PyInstaller lee
+    los modulos del PYZ embebido en el propio .exe de forma perezosa, segun
+    hacen falta. Tras el intercambio, los desplazamientos calculados para el
+    binario viejo apuntan a datos del nuevo y el primer import que llegue
+    revienta con «zlib.error: incorrect header check». Por eso se arranca el
+    binario nuevo y se sale de inmediato, sin importar nada mas.
+
+    subprocess se importa arriba del modulo por lo mismo: tiene que estar ya
+    cargado antes de que el archivo cambie bajo los pies.
     """
     try:
         from core.updater import apply_pending
-        return apply_pending()
+        if not apply_pending():
+            return
     except Exception:
-        return False
+        return
+
+    try:
+        subprocess.Popen([sys.executable],
+                         cwd=os.path.dirname(sys.executable))
+    except Exception:
+        pass
+    # os._exit y no sys.exit: el cierre ordenado del interprete todavia importa
+    # modulos, y este proceso ya no puede leer su propio archivo.
+    os._exit(0)
 
 
 def main() -> int:
-    applied = apply_pending_update()
+    apply_pending_update()     # si actualiza, no vuelve de aqui
+
+    from core.updater import consume_applied_flag
+    applied = consume_applied_flag()
 
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough

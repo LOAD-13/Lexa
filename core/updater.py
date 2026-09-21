@@ -221,6 +221,7 @@ def apply_pending() -> bool:
     try:
         os.replace(actual, viejo)      # renombrar SI se permite en caliente
         os.replace(nuevo, actual)
+        _write_flag()
     except OSError:
         # Si algo impide el cambio, se revierte para no dejar la app rota.
         if not os.path.isfile(actual) and os.path.isfile(viejo):
@@ -230,6 +231,27 @@ def apply_pending() -> bool:
                 pass
         return False
     return True
+
+
+def consume_applied_flag() -> bool:
+    """True una sola vez, en el arranque siguiente a una actualizacion.
+
+    Hace falta una marca en disco porque el proceso que reemplaza el binario
+    no puede seguir vivo para contarlo: tiene que morir inmediatamente.
+    """
+    ruta = os.path.join(updates_dir(), "applied.flag")
+    if not os.path.isfile(ruta):
+        return False
+    _borrar(ruta)
+    return True
+
+
+def _write_flag() -> None:
+    try:
+        with open(os.path.join(updates_dir(), "applied.flag"), "w") as f:
+            f.write(VERSION)
+    except OSError:
+        pass
 
 
 # -- Interno ------------------------------------------------------------------

@@ -7,7 +7,7 @@
 **Convierte audio, video, imágenes y PDFs en texto. Todo en tu computadora.**
 
 <p>
-<img alt="Versión" src="https://img.shields.io/badge/versión-1.3.1-6ec99a?style=flat-square&labelColor=1c1f24">
+<img alt="Versión" src="https://img.shields.io/badge/versión-1.3.2-6ec99a?style=flat-square&labelColor=1c1f24">
 <img alt="Plataforma" src="https://img.shields.io/badge/PLATAFORMA-WINDOWS-0078d4?style=flat-square&labelColor=1c1f24">
 <img alt="Python" src="https://img.shields.io/badge/Python-3.10+-3776ab?style=flat-square&labelColor=1c1f24">
 <img alt="PyQt6" src="https://img.shields.io/badge/PyQt6-6.6-41cd52?style=flat-square&labelColor=1c1f24">
@@ -103,10 +103,10 @@ instalar nada.
 Verifica la descarga contra el `SHA256SUMS.txt` de la Release:
 
 ```powershell
-Get-FileHash .\Lexa-1.3.1-windows-x64.zip -Algorithm SHA256
+Get-FileHash .\Lexa-1.3.2-windows-x64.zip -Algorithm SHA256
 ```
 
-A partir de la 1.3.1, Lexa comprueba al arrancar si hay versión nueva y la
+A partir de la 1.3.2, Lexa comprueba al arrancar si hay versión nueva y la
 instala desde la propia app.
 
 ### Desde el código (para desarrollar)
@@ -181,7 +181,7 @@ no depende de cuál sea el `python` del PATH. Al terminar deja en `dist/`:
 | Archivo | Para qué |
 |---|---|
 | `Lexa/` | La carpeta ejecutable |
-| `Lexa-1.3.1-windows-x64.zip` | Paquete de distribución e instalación limpia |
+| `Lexa-1.3.2-windows-x64.zip` | Paquete de distribución e instalación limpia |
 | `SHA256SUMS.txt` | Hashes que verifica el actualizador |
 
 Se construye en modo **onedir** a propósito: con `onefile`, Windows descomprime

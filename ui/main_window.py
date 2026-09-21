@@ -237,13 +237,32 @@ class MainWindow(QMainWindow):
         self._log("ok", f"Actualizado a Lexa {VERSION}")
 
     def _restart(self) -> None:
-        """Cierra y vuelve a abrir para que arranque el binario nuevo."""
+        """Aplica la actualizacion y arranca el binario nuevo.
+
+        El intercambio se hace AQUI, en el proceso que esta a punto de morir, y
+        no en el que arranca despues. Quien reemplaza el ejecutable no puede
+        seguir leyendo modulos de el: PyInstaller los saca del PYZ embebido
+        segun hacen falta y los desplazamientos dejan de cuadrar.
+
+        Este proceso ya tiene cargado todo lo que necesita y no importa nada
+        mas: guarda los ajustes, cambia el binario, lanza el nuevo y sale.
+        """
         if self._processing:
             QMessageBox.information(
                 self, "Procesamiento en curso",
                 "Espera a que termine el procesamiento antes de reiniciar.",
             )
             return
+
+        self._save_layout()
+        save_config(self._config)
+
+        try:
+            from core.updater import apply_pending
+            apply_pending()
+        except Exception:
+            pass   # sin intercambio se reabre la misma version, no se pierde nada
+
         try:
             subprocess.Popen([sys.executable], cwd=os.path.dirname(sys.executable))
         except Exception as exc:
@@ -252,7 +271,10 @@ class MainWindow(QMainWindow):
                 f"Cierra y vuelve a abrir Lexa a mano.\n\nDetalle: {exc}",
             )
             return
-        self.close()
+
+        # os._exit y no close(): el cierre ordenado de Qt y del interprete
+        # todavia importa modulos, y el archivo de este proceso ya cambio.
+        os._exit(0)
 
     # ── Archivos ─────────────────────────────────────────────────────────────
     def _on_files_added(self, paths: List[str]) -> None:
