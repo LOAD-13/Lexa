@@ -153,18 +153,29 @@ class SetupDialog(QDialog):
         self._cancel_btn = make_btn("Cancelar", kind="ghost")
         self._cancel_btn.clicked.connect(self._on_cancel)
         btn_row.addWidget(self._cancel_btn)
+        self._retry_btn = make_btn("Reintentar", kind="primary")
+        self._retry_btn.clicked.connect(self._on_retry)
+        self._retry_btn.hide()
+        btn_row.addWidget(self._retry_btn)
         root.addLayout(btn_row)
 
     # ── Ciclo de vida ────────────────────────────────────────────────────────
     def showEvent(self, event) -> None:
         super().showEvent(event)
         if self._thread is None:
-            self._thread = _DownloadThread(self._specs, self)
-            self._thread.step_started.connect(self._on_step)
-            self._thread.step_progress.connect(self._on_progress)
-            self._thread.failed.connect(self._on_failed)
-            self._thread.finished_ok.connect(self._on_finished)
-            self._thread.start()
+            self._start_thread()
+
+    def _start_thread(self) -> None:
+        previous = self._thread
+        if previous is not None:
+            previous.wait(2000)
+            previous.deleteLater()
+        self._thread = _DownloadThread(self._specs, self)
+        self._thread.step_started.connect(self._on_step)
+        self._thread.step_progress.connect(self._on_progress)
+        self._thread.failed.connect(self._on_failed)
+        self._thread.finished_ok.connect(self._on_finished)
+        self._thread.start()
 
     def _on_step(self, index: int, label: str) -> None:
         self._current = index
@@ -182,11 +193,28 @@ class SetupDialog(QDialog):
             self._bytes_lbl.setText(_mb(done))
 
     def _on_failed(self, message: str) -> None:
+        # El modal se queda abierto: lo ya descargado sigue en disco y un reintento
+        # retoma donde se quedó, en vez de obligar a repetir la sesión entera.
         self._failed = True
         self._bar.set_error()
         self._step_lbl.setText("La descarga falló")
+        self._bytes_lbl.setText("")
+        self._cancel_btn.setText("Cerrar")
+        self._cancel_btn.setEnabled(True)
+        self._retry_btn.show()
         QMessageBox.critical(self, "No se pudo descargar", message)
-        self.reject()
+
+    def _on_retry(self) -> None:
+        self._failed = False
+        self._retry_btn.hide()
+        self._cancel_btn.setText("Cancelar")
+        self._cancel_btn.setEnabled(True)
+        self._bar.set_progress(0.0)
+        self._step_lbl.setText("Reintentando…")
+        self._bytes_lbl.setText("")
+        # Los modelos que ya bajaron se saltan solos: fetch() no hace nada si el
+        # artefacto está presente.
+        self._start_thread()
 
     def _on_finished(self) -> None:
         self._bar.set_progress(1.0)
@@ -195,6 +223,10 @@ class SetupDialog(QDialog):
         self.accept()
 
     def _on_cancel(self) -> None:
+        if self._failed:
+            # Aquí el botón dice «Cerrar»: el hilo ya terminó, no hay nada que cancelar.
+            self.reject()
+            return
         if self._thread and self._thread.isRunning():
             self._step_lbl.setText("Cancelando…")
             self._cancel_btn.setEnabled(False)

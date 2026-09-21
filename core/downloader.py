@@ -5,8 +5,10 @@ el sentido de que un fallo deja el destino sin tocar (se escribe a un .part y se
 renombra al final), asi que reintentar nunca deja un modelo corrupto a medias.
 """
 from __future__ import annotations
+import functools
 import os
 import shutil
+import ssl
 import tarfile
 import urllib.error
 import urllib.request
@@ -213,24 +215,55 @@ def _safe_extract(tar: tarfile.TarFile, path: str) -> None:
     tar.extractall(path)
 
 
+@functools.lru_cache(maxsize=1)
+def _certifi_context() -> Optional[ssl.SSLContext]:
+    """Contexto TLS validado contra el paquete de CA que trae certifi.
+
+    Es el que se intenta primero porque certifi viaja dentro de la aplicacion y no
+    depende del estado del equipo. Windows no trae todas las raices instaladas: las
+    baja bajo demanda cuando se las pide CryptoAPI (un navegador, .NET), y OpenSSL
+    —que es lo que usa Python— nunca dispara esa descarga, solo lee lo que ya este
+    en el almacen. En un equipo recien instalado, o con la actualizacion automatica
+    de raices desactivada por directiva de dominio, falta la raiz de Let's Encrypt
+    y los modelos alojados en GitHub Releases se vuelven indescargables.
+    """
+    try:
+        import certifi
+    except ImportError:
+        return None
+    try:
+        return ssl.create_default_context(cafile=certifi.where())
+    except OSError:
+        return None
+
+
+@functools.lru_cache(maxsize=1)
+def _system_context() -> ssl.SSLContext:
+    """Contexto TLS validado contra el almacen de certificados del sistema.
+
+    Es el respaldo, para el caso contrario: redes con antivirus o proxy que
+    inspecciona HTTPS y reemite los certificados con su propia raiz. Esa raiz esta
+    instalada en Windows pero nunca en certifi.
+    """
+    return ssl.create_default_context()
+
+
+def _tls_contexts() -> List[ssl.SSLContext]:
+    return [c for c in (_certifi_context(), _system_context()) if c is not None]
+
+
+def _is_cert_error(exc: BaseException) -> bool:
+    """urlopen envuelve el fallo de verificacion en un URLError, asi que no basta
+    con mirar el tipo de la excepcion: hay que mirar tambien su .reason."""
+    if isinstance(exc, ssl.SSLCertVerificationError):
+        return True
+    return isinstance(getattr(exc, "reason", None), ssl.SSLCertVerificationError)
+
+
 def _download(url: str, dest: str, progress, should_cancel) -> None:
     part = dest + ".part"
-    req = urllib.request.Request(url, headers={"User-Agent": "Lexa/1.0"})
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            total = int(resp.headers.get("Content-Length") or 0)
-            done = 0
-            with open(part, "wb") as f:
-                while True:
-                    if should_cancel is not None and should_cancel():
-                        raise DownloadCancelled()
-                    chunk = resp.read(1 << 16)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-                    done += len(chunk)
-                    if progress:
-                        progress(done, total)
+        _stream_any_store(url, part, progress, should_cancel)
         os.replace(part, dest)
     except DownloadCancelled:
         _unlink(part)
@@ -238,6 +271,45 @@ def _download(url: str, dest: str, progress, should_cancel) -> None:
     except (urllib.error.URLError, OSError, TimeoutError) as exc:
         _unlink(part)
         raise RuntimeError(_net_error(exc)) from exc
+
+
+def _stream_any_store(url: str, part: str, progress, should_cancel) -> None:
+    """Prueba cada almacen de CA por turno hasta que uno verifique el certificado.
+
+    Solo se reintenta ante un fallo de verificacion: cualquier otro error (sin red,
+    timeout, 404) se propaga de inmediato, porque cambiar de almacen no lo arregla.
+    El reintento es seguro porque la verificacion ocurre durante el handshake, antes
+    de que se abra el archivo de destino o se reporte un solo byte de progreso.
+    """
+    contexts = _tls_contexts()
+    last: Exception = RuntimeError("No hay ningun almacen de certificados disponible.")
+    for context in contexts:
+        try:
+            _stream(url, part, context, progress, should_cancel)
+            return
+        except Exception as exc:
+            if not _is_cert_error(exc):
+                raise
+            last = exc
+    raise last
+
+
+def _stream(url: str, part: str, context: ssl.SSLContext, progress, should_cancel) -> None:
+    req = urllib.request.Request(url, headers={"User-Agent": "Lexa/1.0"})
+    with urllib.request.urlopen(req, timeout=60, context=context) as resp:
+        total = int(resp.headers.get("Content-Length") or 0)
+        done = 0
+        with open(part, "wb") as f:
+            while True:
+                if should_cancel is not None and should_cancel():
+                    raise DownloadCancelled()
+                chunk = resp.read(1 << 16)
+                if not chunk:
+                    break
+                f.write(chunk)
+                done += len(chunk)
+                if progress:
+                    progress(done, total)
 
 
 def _unlink(path: str) -> None:
@@ -260,6 +332,15 @@ def _dir_size(path: str) -> int:
 
 
 def _net_error(exc: Exception) -> str:
+    if _is_cert_error(exc):
+        return (
+            "No se pudo verificar el certificado del servidor.\n\n"
+            "Suele ocurrir en equipos con Windows sin actualizar, o en redes "
+            "corporativas con un antivirus o proxy que inspecciona el tráfico "
+            "HTTPS. Instala las actualizaciones pendientes de Windows y vuelve "
+            "a intentarlo.\n\n"
+            f"Detalle: {exc}"
+        )
     return (
         "No se pudo descargar el modelo.\n\n"
         "Comprueba tu conexión a internet y vuelve a intentarlo. "
