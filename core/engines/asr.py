@@ -11,9 +11,17 @@ import numpy as np
 from core.models import Segment
 from core.paths import models_dir
 
+SAMPLE_RATE = 16000
+
 # El modelo tarda varios segundos en cargar, asi que se cachea entre archivos.
 # Clave: (nombre_modelo, device, compute_type).
 _MODEL_CACHE: dict[tuple, object] = {}
+
+# Fraccion minima del audio que el VAD debe conservar para considerarlo fiable.
+# Una conversacion normal deja pasar el 70-95%; una clase con pausas largas,
+# rara vez menos de la mitad. Por debajo de eso el filtro esta fallando, no
+# recortando silencio.
+_MIN_VAD_COVERAGE = 0.5
 
 
 def detect_device() -> tuple[str, str]:
@@ -90,12 +98,90 @@ def unload_models() -> None:
     _MODEL_CACHE.clear()
 
 
+_VAD_PARAMETERS = {"min_silence_duration_ms": 500}
+
+
+def vad_speech(audio: np.ndarray) -> Optional[list]:
+    """Tramos de voz segun el VAD (en samples), o None si no se puede medir."""
+    try:
+        from faster_whisper.vad import VadOptions, get_speech_timestamps
+    except Exception:
+        return None
+
+    if len(audio) == 0:
+        return None
+
+    try:
+        return get_speech_timestamps(audio, VadOptions(**_VAD_PARAMETERS))
+    except Exception:
+        return None
+
+
+def vad_coverage(audio: np.ndarray) -> Optional[float]:
+    """Fraccion del audio que el VAD marcaria como voz, o None si no se puede medir.
+
+    Es la unica etapa de la cadena que puede descartar voz sin dejar rastro:
+    lo que recorta no llega al modelo y no aparece en el resultado. Por eso se
+    mide antes, en vez de confiar en que acerto.
+    """
+    speech = vad_speech(audio)
+    if speech is None or len(audio) == 0:
+        return None
+    return sum(t["end"] - t["start"] for t in speech) / len(audio)
+
+
+# Sin VAD, el modelo decodifica tambien el silencio y rellena cada ventana de
+# 30 s con una frase inventada («gracias por ver el video»). Se filtran con dos
+# reglas medidas sobre audio real, no adivinadas:
+#
+#   - Densidad: en la grabacion de prueba el habla mas lenta daba 4.67 car/s y
+#     las alucinaciones 0.33-0.83. Un segmento largo casi vacio no es habla.
+#   - Cola: todas caian pasado el ultimo tramo que el VAD reconocio. El VAD
+#     peca de no detectar voz floja, nunca de inventarla, asi que su ultima
+#     deteccion mas un margen de una ventana es un final seguro.
+#
+# Solo se aplican cuando el VAD va desactivado; con VAD el silencio ni llega
+# al modelo y estas reglas no tendrian nada que hacer.
+_LONG_SEGMENT_SECS = 20.0
+_MIN_CHARS_PER_SEC = 2.0
+_TAIL_MARGIN_SECS = 30.0
+
+
+def _describe_audio(audio: np.ndarray, seconds: float,
+                    coverage: Optional[float]) -> str:
+    """Resumen legible del material: duracion, volumen y cuanta voz se detecta."""
+    minutes, secs = divmod(int(seconds), 60)
+    parts = [f"{minutes}:{secs:02d} de audio"]
+
+    rms = float(np.sqrt(np.mean(np.square(audio)))) if len(audio) else 0.0
+    if rms > 0:
+        # dBFS: 0 es el maximo, los valores utiles son negativos. Por debajo de
+        # -35 la grabacion es floja aunque se entienda bien al oido.
+        dbfs = 20.0 * np.log10(rms)
+        nivel = "bajo" if dbfs < -35 else "normal"
+        parts.append(f"nivel {nivel} ({dbfs:.0f} dBFS)")
+
+    if coverage is not None:
+        parts.append(f"{coverage:.0%} de voz detectada")
+    return " · ".join(parts)
+
+
+def _is_implausible(start: float, end: float, text: str) -> bool:
+    """True si el segmento es demasiado largo para lo poco que dice."""
+    duration = end - start
+    if duration < _LONG_SEGMENT_SECS:
+        return False
+    return len(text) / duration < _MIN_CHARS_PER_SEC
+
+
 def transcribe(
     audio: np.ndarray,
     language: str = "es",
     model_name: str = "large-v3-turbo",
     progress_callback: Optional[Callable[[float], None]] = None,
     should_abort: Optional[Callable[[], bool]] = None,
+    on_notice: Optional[Callable[[str, str], None]] = None,
+    vocabulary: str = "",
 ) -> List[Segment]:
     """Transcribe PCM float32 mono a 16 kHz y devuelve los segmentos crudos.
 
@@ -104,16 +190,48 @@ def transcribe(
     """
     model = load_model(model_name)
 
-    total_secs = max(len(audio) / 16000.0, 0.001)
+    total_secs = max(len(audio) / float(SAMPLE_RATE), 0.001)
+
+    # El VAD de Silero da por silencio la voz lejana y reverberada de una sala,
+    # y con un microfono a varios metros puede tragarse casi la grabacion
+    # entera. Sondearlo cuesta ~2 s por cada 20 min de audio; perder el 90% de
+    # una clase, todo. Si descarta demasiado, se transcribe el audio completo:
+    # mas lento, pero nunca devuelve media transcripcion en silencio.
+    speech = vad_speech(audio)
+    coverage = (sum(t["end"] - t["start"] for t in speech) / len(audio)
+                if speech is not None and len(audio) else None)
+    use_vad = coverage is not None and coverage >= _MIN_VAD_COVERAGE
+
+    # Frontera tras la cual ya no queda voz que transcribir. Solo tiene sentido
+    # si el VAD detecto algo: sin detecciones no hay nada en que basarse.
+    tail_cutoff = float("inf")
+    if not use_vad and speech:
+        tail_cutoff = speech[-1]["end"] / SAMPLE_RATE + _TAIL_MARGIN_SECS
+
+    if on_notice:
+        # Analisis previo: sale antes de empezar el trabajo pesado, para que se
+        # vea con que material se esta trabajando en vez de descubrirlo al final.
+        on_notice("info", _describe_audio(audio, total_secs, coverage))
+        if not use_vad:
+            on_notice(
+                "warn",
+                "voz poco marcada (micrófono lejano o con eco): se transcribe el "
+                "audio completo, tardará más",
+            )
 
     segments_iter, info = model.transcribe(
         audio,
         language=None if language == "auto" else language,
         task="transcribe",
         beam_size=5,
-        vad_filter=True,          # recorta silencios: mas rapido y menos alucinaciones
-        vad_parameters={"min_silence_duration_ms": 500},
+        vad_filter=use_vad,       # recorta silencios: mas rapido y menos alucinaciones
+        vad_parameters=_VAD_PARAMETERS,
         condition_on_previous_text=False,   # evita bucles de texto repetido
+        # «hotwords» y no «initial_prompt»: con condition_on_previous_text=False
+        # el prompt inicial se descarta tras la primera ventana de 30 s, asi que
+        # solo corregiria el principio del archivo. Los hotwords se reinyectan
+        # en cada ventana (faster_whisper/transcribe.py, get_prompt).
+        hotwords=vocabulary.strip() or None,
     )
 
     # La duracion que reporta el modelo es mas fiable que la del contenedor.
@@ -121,10 +239,20 @@ def transcribe(
         total_secs = max(float(info.duration), 0.001)
 
     out: List[Segment] = []
+    dropped = 0
     for seg in segments_iter:
         if should_abort is not None and should_abort():
             break
+        # Un segmento que empieza despues del ultimo sample no existe.
+        if float(seg.start) >= total_secs:
+            continue
         text = (seg.text or "").strip()
+        if text and not use_vad and (
+            float(seg.start) >= tail_cutoff
+            or _is_implausible(float(seg.start), float(seg.end), text)
+        ):
+            dropped += 1
+            continue
         if text:
             out.append(Segment(
                 start=float(seg.start),
@@ -136,6 +264,9 @@ def transcribe(
 
     if progress_callback:
         progress_callback(1.0)
+    if dropped and on_notice:
+        on_notice("warn",
+                  f"{dropped} fragmento(s) inventados sobre el silencio, descartados")
     return out
 
 
