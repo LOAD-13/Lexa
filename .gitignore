@@ -59,6 +59,20 @@ test_output/
 *.vtt
 
 # ─────────────────────────────────────────────────────────────
+# Paquetes y copias de seguridad
+# El zip de distribucion se genera desde dist/ y se publica como Release,
+# no se versiona: son ~200 MB que quedarian en el historial para siempre.
+# ─────────────────────────────────────────────────────────────
+*.zip
+*.7z
+*.rar
+*.bak
+*.old
+*.orig
+*.tmp
+Lexa-*-windows-*/
+
+# ─────────────────────────────────────────────────────────────
 # Sistema operativo
 # ─────────────────────────────────────────────────────────────
 Thumbs.db
