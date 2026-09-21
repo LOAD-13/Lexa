@@ -7,8 +7,10 @@ from __future__ import annotations
 import time
 from typing import List, Optional
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QColor, QPainter, QBrush, QLinearGradient
+from collections import deque
+
+from PyQt6.QtCore import Qt, QTimer, QPointF, pyqtSignal
+from PyQt6.QtGui import QColor, QPainter, QBrush, QLinearGradient, QPainterPath, QPen
 from PyQt6.QtWidgets import (
     QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget,
 )
@@ -18,11 +20,31 @@ from ui import theme as T
 
 _MAX_LOG_ROWS = 400
 
+# Ventana del grafico de ritmo: una muestra por segundo.
+_RATE_SAMPLES = 60
+
+# El progreso NO llega de forma continua: faster-whisper decodifica una ventana
+# entera y suelta todos sus segmentos de golpe. Medido sobre un archivo real,
+# 65 avisos de progreso llegaron en 9 rafagas separadas hasta 13.1 s. Restar
+# dos lecturas separadas 1 s daba un pico aislado por rafaga y cero el resto
+# del tiempo. El ritmo se mide sobre una ventana mas larga que ese hueco, que
+# siempre contiene al menos una rafaga.
+_RATE_WINDOW_SECS = 15.0
+
+# Tiempo minimo antes de fiarse del ritmo medio para la cuenta atras.
+_RATE_MIN_ELAPSED = 8.0
+
+# Cuanto se acerca la cuenta atras mostrada al valor calculado en cada segundo.
+_ETA_SMOOTHING = 0.15
+
 
 class Footer(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumHeight(112)
+        # 112 antes de que existiera el grafico de ritmo: con el, la columna
+        # izquierda necesita ~131 y el grafico quedaba recortado al arrastrar
+        # el separador hacia abajo.
+        self.setMinimumHeight(140)
         self.setMaximumHeight(320)
         self.setStyleSheet(f"""
             Footer {{
@@ -33,6 +55,10 @@ class Footer(QWidget):
 
         self._started_at: Optional[float] = None
         self._last_progress = 0.0
+        self._audio_total = 0.0      # segundos de audio de todo el lote
+        self._audio_done = 0.0       # segundos ya transcritos
+        self._processing = False
+        self._eta_shown: Optional[float] = None   # cuenta atras suavizada
 
         grid = QHBoxLayout(self)
         grid.setContentsMargins(0, 0, 0, 0)
@@ -88,6 +114,12 @@ class Footer(QWidget):
             counters.addWidget(widget)
         counters.addStretch()
         left_lay.addLayout(counters)
+
+        self._rate = RateChart()
+        # La ETA la mueve el reloj del grafico, no las senales de progreso:
+        # esas llegan a rafagas y dejaban el tiempo restante congelado 9-13 s.
+        self._rate.rate_changed.connect(self._on_rate)
+        left_lay.addWidget(self._rate)
         left_lay.addStretch()
 
         grid.addWidget(left)
@@ -104,10 +136,13 @@ class Footer(QWidget):
     def mark_started(self) -> None:
         self._started_at = time.monotonic()
         self._last_progress = 0.0
+        self._eta_shown = None
+        self._rate.start()
 
     def mark_stopped(self) -> None:
         self._started_at = None
         self._eta.setText("")
+        self._rate.stop()
 
     def update_files(self, items: List[FileItem]) -> None:
         if not items:
@@ -128,11 +163,24 @@ class Footer(QWidget):
         self._pct.setText(f"{int(overall * 100)}%")
         self._last_progress = overall
 
+        # Segundos de audio ya transcritos: los archivos terminados enteros mas
+        # la fraccion del que va en curso. Solo cuentan los que tienen duracion
+        # conocida; una imagen o un PDF no aportan segundos de audio.
+        self._audio_total = sum(f.duration for f in items if f.duration)
+        self._audio_done = sum(
+            f.duration * (1.0 if f.status in (FileStatus.DONE, FileStatus.ERROR)
+                          else f.progress)
+            for f in items if f.duration
+        )
+        self._rate.set_audio_progress(self._audio_done)
+
         self._done_counter[1].setText(str(done))
         self._proc_counter[1].setText(str(len(processing)))
         self._queue_counter[1].setText(str(max(0, queued)))
         self._err_counter[1].setText(str(errors))
         self._err_counter[0].setVisible(errors > 0)
+
+        self._processing = bool(processing)
 
         if processing:
             current = processing[0]
@@ -156,17 +204,56 @@ class Footer(QWidget):
         self._log.clear()
 
     # ── Interno ──────────────────────────────────────────────────────────────
-    def _update_eta(self, progress: float) -> None:
-        """Estima el tiempo restante extrapolando el ritmo observado."""
-        if self._started_at is None or progress <= 0.02:
+    def _on_rate(self, rate: float) -> None:
+        """Llega una vez por segundo desde el grafico: refresca la cuenta atras."""
+        if self._processing:
+            self._update_eta(self._last_progress, rate)
+
+    def _update_eta(self, progress: float, rate: Optional[float] = None) -> None:
+        """Tiempo restante, preferiblemente a partir del ritmo medido.
+
+        Con el ritmo, el calculo es directo: audio que queda dividido por audio
+        procesado por segundo. Es mucho mas estable que extrapolar el progreso
+        contra el tiempo transcurrido, porque ese `transcurrido` arrastra la
+        carga del modelo y las primeras estimaciones salian disparadas.
+        """
+        if self._started_at is None:
             self._eta.setText("")
             return
-        elapsed = time.monotonic() - self._started_at
-        remaining = elapsed / progress - elapsed
-        if remaining < 1 or remaining > 86400:
+
+        remaining = None
+        # Siempre la media acumulada, aunque el tick traiga la ventana corta:
+        # el argumento solo sirve para saber que hay que refrescar.
+        rate = self._rate.average_rate()
+
+        if rate > 0 and self._audio_total > 0:
+            pending = max(0.0, self._audio_total - self._audio_done)
+            remaining = pending / rate
+        elif progress > 0.02:
+            # Sin duracion conocida (imagenes, PDF) se extrapola el progreso.
+            elapsed = time.monotonic() - self._started_at
+            remaining = elapsed / progress - elapsed
+
+        if remaining is None:
+            self._eta.setText("calculando…")
+            return
+        if remaining > 86400:
             self._eta.setText("")
             return
-        self._eta.setText(f"~{_duration(remaining)} restante")
+
+        # El progreso llega a rafagas, asi que el calculo sube durante el hueco
+        # y se desploma cuando aterriza la siguiente. Mostrarlo en crudo daba
+        # saltos de hasta 88 s de un segundo al otro. Se suaviza el numero que
+        # se ensena, no la medicion: el calculo sigue siendo el real.
+        if self._eta_shown is None:
+            self._eta_shown = remaining
+        else:
+            self._eta_shown += (remaining - self._eta_shown) * _ETA_SMOOTHING
+
+        if self._eta_shown < 1:
+            self._eta.setText("")
+            return
+        self._eta.setText(f"~{_duration(self._eta_shown)} restante")
 
     def _reset(self) -> None:
         self._bar.set_progress(0)
@@ -179,6 +266,183 @@ class Footer(QWidget):
             value.setText("0")
         self._err_counter[0].setVisible(False)
         self._dot.set_active(False)
+        self._rate.stop()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+class RateChart(QWidget):
+    """Ritmo de transcripcion del ultimo minuto, una muestra por segundo.
+
+    Mide segundos de audio procesados por segundo de reloj: 2.4x quiere decir
+    que en un segundo avanza 2.4 segundos de grabacion.
+
+    El ritmo de cada muestra se calcula sobre los ultimos _RATE_WINDOW_SECS, no
+    contra la lectura anterior. El progreso llega a rafagas separadas hasta
+    13 s (una por ventana decodificada), y restar dos lecturas de 1 s daba un
+    pico aislado por rafaga con el suelo a cero entre medias: un grafico que
+    parecia ruido cuando el ritmo real era constante.
+    """
+
+    rate_changed = pyqtSignal(float)   # ritmo suavizado en cada tick
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(40)
+        self._samples: deque = deque(maxlen=_RATE_SAMPLES)
+        self._audio_secs = 0.0
+        # Historial (reloj, segundos de audio) sobre el que se mide la ventana.
+        self._history: deque = deque(maxlen=_RATE_SAMPLES * 2)
+        self._active = False
+        # Momento del primer avance real. La cuenta atras se mide desde aqui y
+        # no desde que se pulso el boton: entre medias esta la carga del modelo,
+        # que son decenas de segundos sin transcribir ni un solo segmento.
+        # (reloj, segundos de audio) del primer avance real.
+        self._first_progress: Optional[tuple] = None
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(1000)
+        self._timer.timeout.connect(self._tick)
+
+    # -- API ------------------------------------------------------------------
+    def start(self) -> None:
+        self._samples.clear()
+        self._history.clear()
+        self._first_progress = None
+        self._active = True
+        self._timer.start()
+        self.update()
+
+    def stop(self) -> None:
+        self._active = False
+        self._timer.stop()
+        self.update()
+
+    def set_audio_progress(self, audio_secs: float) -> None:
+        """Segundos de audio procesados en total hasta ahora."""
+        self._audio_secs = audio_secs
+
+    def current_rate(self) -> float:
+        """Ritmo de la ventana corta. Para el grafico, que debe mostrar variacion."""
+        return self._samples[-1] if self._samples else 0.0
+
+    def average_rate(self) -> float:
+        """Ritmo medio desde el primer avance. Para la cuenta atras.
+
+        La ventana corta oscila entre 1.1x y 3.8x sobre el mismo archivo, y una
+        ETA calculada con ella saltaba de 47 s a 2m20s de un segundo al otro.
+        La media acumulada converge y hace que el tiempo restante baje solo.
+        """
+        if self._first_progress is None:
+            return 0.0
+        t0, audio0 = self._first_progress
+        elapsed = time.monotonic() - t0
+        # Por debajo de unos segundos el cociente se dispara (la primera rafaga
+        # llega entera de golpe) y daba estimaciones absurdamente optimistas.
+        if elapsed < _RATE_MIN_ELAPSED:
+            return 0.0
+        # Se descuenta el audio que ya venia en esa primera rafaga: lo que se
+        # mide es el avance DESDE ese momento, no el acumulado total.
+        return max(0.0, self._audio_secs - audio0) / elapsed
+
+    # -- Interno --------------------------------------------------------------
+    def _tick(self) -> None:
+        now = time.monotonic()
+        if self._first_progress is None and self._audio_secs > 0:
+            self._first_progress = (now, self._audio_secs)
+        self._history.append((now, self._audio_secs))
+
+        rate = self._window_rate(now)
+        if rate is not None:
+            self._samples.append(rate)
+            self.rate_changed.emit(rate)
+
+        self.update()
+
+    def _window_rate(self, now: float) -> Optional[float]:
+        """Ritmo sobre la ventana movil, o None si aun no hay dos lecturas.
+
+        Se toma la lectura mas antigua que siga dentro de la ventana. Mientras
+        el historial sea mas corto que la ventana se usa la primera de todas,
+        de modo que el grafico arranca en cuanto hay dos lecturas en vez de
+        quedarse quince segundos en blanco.
+        """
+        if len(self._history) < 2:
+            return None
+
+        corte = now - _RATE_WINDOW_SECS
+        base = self._history[0]
+        for punto in self._history:
+            if punto[0] >= corte:
+                break
+            base = punto
+
+        wall = now - base[0]
+        if wall <= 0:
+            return None
+        # max(0): el acumulado no baja al avanzar, pero quitar un archivo de la
+        # cola si puede bajarlo, y un ritmo negativo no existe.
+        return max(0.0, (self._audio_secs - base[1]) / wall)
+
+    def paintEvent(self, _) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+
+        label_h = 13
+        top = label_h + 2
+        plot_h = max(1, h - top - 1)
+
+        p.setPen(QColor(T.MUTED))
+        font = p.font()
+        font.setPointSize(7)
+        p.setFont(font)
+        p.drawText(0, 0, w, label_h,
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "RITMO")
+
+        if not self._samples:
+            p.setPen(QColor(T.DIM))
+            p.drawText(0, top, w, plot_h, Qt.AlignmentFlag.AlignCenter,
+                       "sin datos todavía" if self._active else "")
+            p.end()
+            return
+
+        current = self._samples[-1]
+        p.setPen(QColor(T.FG2))
+        p.drawText(0, 0, w, label_h,
+                   Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                   f"{current:.1f}x")
+
+        # La escala se ajusta al maximo observado: lo que importa es la forma
+        # relativa, y un eje fijo dejaria el grafico plano en audios lentos.
+        peak = max(max(self._samples), 0.001)
+        step = w / max(1, _RATE_SAMPLES - 1)
+        offset = w - step * (len(self._samples) - 1)
+
+        points = [
+            QPointF(offset + i * step, top + plot_h - (v / peak) * plot_h)
+            for i, v in enumerate(self._samples)
+        ]
+
+        area = QPainterPath()
+        area.moveTo(points[0].x(), top + plot_h)
+        for point in points:
+            area.lineTo(point)
+        area.lineTo(points[-1].x(), top + plot_h)
+        area.closeSubpath()
+
+        fill = QLinearGradient(0, top, 0, top + plot_h)
+        fill.setColorAt(0.0, QColor(T.ACCENT_SOFT))
+        fill.setColorAt(1.0, QColor(0, 0, 0, 0))
+        p.fillPath(area, QBrush(fill))
+
+        line = QPainterPath()
+        line.moveTo(points[0])
+        for point in points[1:]:
+            line.lineTo(point)
+        p.setPen(QPen(QColor(T.ACCENT), 1.2))
+        p.drawPath(line)
+        p.end()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
