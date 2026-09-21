@@ -119,8 +119,10 @@ def main() -> int:
     ]
     for module in HIDDEN_IMPORTS:
         command += ["--hidden-import", module]
-    for package in COLLECT_ALL:
-        command += ["--collect-all", package]
+    # «paquete» y no «package»: el nombre de la funcion que empaqueta al final
+    # es package(), y usarlo aqui como variable de bucle la dejaba tapada.
+    for paquete in COLLECT_ALL:
+        command += ["--collect-all", paquete]
     for module in EXCLUDES:
         command += ["--exclude-module", module]
     command.append(os.path.join(ROOT, "main.py"))
