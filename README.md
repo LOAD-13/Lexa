@@ -1,13 +1,29 @@
 <div align="center">
 
-<img src="icon.png" width="96" alt="Lexa">
+<img src="icon.png" width="104" alt="Lexa">
 
 # Lexa
 
 **Convierte audio, video, imágenes y PDFs en texto. Todo en tu computadora.**
 
-Aplicación de escritorio para Windows. Sin cuentas, sin API keys, sin subir
-nada a internet.
+<p>
+<img alt="Versión" src="https://img.shields.io/badge/versión-1.3.0-6ec99a?style=flat-square&labelColor=1c1f24">
+<img alt="Plataforma" src="https://img.shields.io/badge/PLATAFORMA-WINDOWS-0078d4?style=flat-square&labelColor=1c1f24">
+<img alt="Python" src="https://img.shields.io/badge/Python-3.10+-3776ab?style=flat-square&labelColor=1c1f24">
+<img alt="PyQt6" src="https://img.shields.io/badge/PyQt6-6.6-41cd52?style=flat-square&labelColor=1c1f24">
+</p>
+<p>
+<img alt="Whisper" src="https://img.shields.io/badge/ASR-faster--whisper-ff6f00?style=flat-square&labelColor=1c1f24">
+<img alt="CTranslate2" src="https://img.shields.io/badge/runtime-CTranslate2-8a63d2?style=flat-square&labelColor=1c1f24">
+<img alt="ONNX" src="https://img.shields.io/badge/OCR%20%2F%20diarización-ONNX%20Runtime-005ce6?style=flat-square&labelColor=1c1f24">
+<img alt="Sin PyTorch" src="https://img.shields.io/badge/sin-PyTorch-c97272?style=flat-square&labelColor=1c1f24">
+<img alt="Offline" src="https://img.shields.io/badge/100%25-offline-6ec99a?style=flat-square&labelColor=1c1f24">
+<img alt="Licencia" src="https://img.shields.io/badge/licencia-MIT-888888?style=flat-square&labelColor=1c1f24">
+</p>
+
+Sin cuentas, sin API keys, sin subir nada a internet.
+
+<img src="docs/img/captura.png" width="900" alt="Lexa en funcionamiento">
 
 </div>
 
@@ -17,93 +33,123 @@ nada a internet.
 
 | Entrada | Qué obtienes |
 |---|---|
-| 🎙️ **Audio** — mp3, wav, m4a, ogg, flac, aac, opus, wma… | Transcripción con puntuación, agrupada en párrafos |
-| 🎬 **Video** — mp4, mkv, avi, mov, webm… | Lo mismo, extrayendo la pista de audio |
-| 🖼️ **Imágenes** — jpg, png, webp, tiff… | Texto reconocido con OCR, respetando el orden de lectura |
-| 📄 **PDF** — nativos y **escaneados** | Texto embebido cuando existe; OCR página a página cuando la letra es una imagen |
+| **Audio** — mp3, wav, m4a, ogg, flac, aac, opus, wma | Transcripción con puntuación, agrupada en párrafos |
+| **Video** — mp4, mkv, avi, mov, webm | Lo mismo, extrayendo la pista de audio |
+| **Imágenes** — jpg, png, webp, tiff | Texto reconocido con OCR, respetando el orden de lectura |
+| **PDF** — nativos y escaneados | Texto embebido cuando existe; OCR página a página cuando la letra es una imagen |
 
 Además:
 
+- **Diccionario de términos** — escribe los nombres y palabras que el modelo suele
+  escribir mal (apellidos, marcas, jerga) y los acierta.
 - **Identificación de hablantes** — separa quién dice qué en una conversación.
-- **Exporta a TXT, Word, PDF, Markdown, SRT y VTT** — los dos últimos son
-  subtítulos listos para un reproductor de video.
-- **Funciona sin conexión** una vez descargados los modelos.
+- **Aguanta grabaciones malas** — micrófono lejano, sala con eco, volumen bajo.
+- **Caché de resultados** — volver a soltar un archivo ya procesado con los mismos
+  ajustes lo devuelve al instante.
+- **Exporta a TXT, Word, PDF, Markdown, SRT y VTT.**
+- **Se actualiza sola** desde GitHub Releases, verificando el SHA-256.
 - **Arrastra una carpeta entera** y procesa todo lo que haya dentro.
+
+## Arquitectura
+
+```mermaid
+flowchart TD
+    UI["ui/ · PyQt6<br/>paneles, cola, tour, avisos"]
+    W["core/worker.py<br/>QThread"]
+    CA["core/cache.py<br/>%LOCALAPPDATA%"]
+    ME["engines/media.py<br/>PyAV"]
+    AS["engines/asr.py<br/>faster-whisper"]
+    DI["engines/diarize.py<br/>sherpa-onnx"]
+    OC["engines/ocr.py<br/>RapidOCR"]
+    PD["engines/pdf.py<br/>PyMuPDF"]
+    SG["Segment[]<br/>start · end · text · speaker"]
+    FO["core/formatter.py"]
+    EX["core/exporter.py"]
+    UP["core/updater.py<br/>GitHub Releases"]
+
+    UI -->|"FileItem[] + AppConfig"| W
+    W <-->|"acierto: 0.1 s"| CA
+    W -->|"audio y video"| ME
+    ME -->|"PCM 16 kHz mono"| AS
+    AS --> SG
+    ME -.->|"si se piden hablantes"| DI
+    DI -.-> SG
+    W -->|"imágenes"| OC
+    W -->|"PDF"| PD
+    OC --> SG
+    PD --> SG
+    SG --> FO
+    FO -->|"párrafos · SRT · VTT · JSON"| UI
+    FO --> EX
+    EX -->|"TXT · DOCX · PDF · MD · SRT · VTT"| UI
+    UP -.->|"SHA-256 verificado"| UI
+```
+
+Cuatro motores distintos detrás de una cola común. **Ninguno conoce Qt**: todos
+devuelven `Segment[]` y el worker es el único puente con la interfaz.
+`formatter.py` es el único módulo que decide cómo se ve el texto final, así que
+una transcripción y un OCR producen la misma estructura de salida.
 
 ## Instalación
 
-### Opción A — El ejecutable (recomendado para usar)
+### El ejecutable (recomendado para usar)
 
-Descarga la última versión desde [Releases](../../releases), descomprime y haz
-doble clic en **`Lexa.exe`**.
+Descarga el zip de la [última Release](https://github.com/LOAD-13/Lexa/releases/latest),
+descomprime la carpeta completa y ejecuta `Lexa.exe`. No requiere Python ni
+instalar nada.
 
-No necesitas Python ni instalar nada más. La primera vez que proceses un
-archivo, Lexa descargará los modelos de IA (~1.7 GB) mostrando una barra de
-progreso. Solo ocurre una vez.
+Verifica la descarga contra el `SHA256SUMS.txt` de la Release:
 
-### Opción B — Desde el código (para desarrollar)
-
-```bash
-git clone https://github.com/LOAD-13/lexaTranscriptionApp.git
-cd lexaTranscriptionApp
-pip install -r requirements.txt
-python main.py
+```powershell
+Get-FileHash .\Lexa-1.3.0-windows-x64.zip -Algorithm SHA256
 ```
 
-Requiere Python 3.10 o superior. En Windows, `Lexa.pyw` arranca la app sin
-que aparezca una ventana de consola.
+A partir de la 1.3.0, Lexa comprueba al arrancar si hay versión nueva y la
+instala desde la propia app.
 
-## Uso
+### Desde el código (para desarrollar)
 
-1. Arrastra tus archivos a la zona de entrada (o pulsa **Elegir archivos**).
-2. Ajusta idioma, calidad y formato de salida en el panel derecho.
-3. Pulsa **Iniciar procesamiento**.
-
-El resultado aparece en el centro y se guarda automáticamente en
-`Documentos\Lexa`. La primera vez que abras la app, el asistente **Lexa** te da
-un tour guiado; puedes repetirlo desde el botón **?** de la barra superior.
+```bash
+git clone https://github.com/LOAD-13/Lexa.git
+cd Lexa
+python bootstrap.py       # instala lo que falte y arranca
+```
 
 ## Modelos de calidad
 
-| Modelo | Descarga | Cuándo usarlo |
+| Modelo | Tamaño | Cuándo usarlo |
 |---|---|---|
-| Tiny | 75 MB | Pruebas rápidas, audio muy claro |
-| Base | 145 MB | Notas de voz cortas |
-| Small | 480 MB | Buen equilibrio en equipos modestos |
-| Medium | 1.5 GB | Audio con ruido de fondo |
-| **Turbo** ⭐ | 1.6 GB | **Por defecto.** Casi la calidad de Large a bastante más velocidad |
-| Large | 3.1 GB | Máxima precisión, audio difícil o acentos marcados |
+| Base | 145 MB | Pruebas rápidas, audio muy claro |
+| Small | 480 MB | Equilibrio para notas de voz |
+| Turbo | 1.6 GB | **Recomendado.** Casi la calidad de Large a un tercio del tiempo |
+| Large | 3.1 GB | Audio difícil, acentos marcados, varios hablantes |
 
-Cada modelo se descarga solo la primera vez que lo eliges y queda guardado en
-`%LOCALAPPDATA%\Lexa\models`.
-
-Si tienes una **GPU NVIDIA**, Lexa la detecta y la usa automáticamente
-(`float16`); si no, corre en CPU con cuantización `int8`.
+Se descargan una sola vez a `%LOCALAPPDATA%\Lexa\models`. Con una **GPU NVIDIA**
+Lexa la detecta y usa `float16`; si no, corre en CPU con cuantización `int8`.
 
 ## Cómo está construido
 
 ```
-main.py               Punto de entrada
+main.py               Punto de entrada, aplica actualizaciones pendientes
 core/
+  version.py          Única fuente de la versión
   models.py           FileItem, FileKind, AppConfig, Segment
   paths.py            Rutas de modelos y configuración (compatible con el .exe)
   config_store.py     Persistencia en %APPDATA%\Lexa\config.json
+  cache.py            Resultados ya calculados, indexados por archivo + ajustes
+  updater.py          Consulta, descarga verificada y reemplazo en frío
   downloader.py       Descarga de modelos con progreso en bytes
   formatter.py        Segment[] → párrafos / SRT / VTT / JSON
   exporter.py         TXT, MD, PDF, DOCX, SRT, VTT
   worker.py           Hilo de procesamiento (QThread)
   engines/
     media.py          PyAV: audio y video → PCM 16 kHz mono
-    asr.py            faster-whisper
+    asr.py            faster-whisper, con VAD adaptativo
     diarize.py        sherpa-onnx
     ocr.py            RapidOCR (Tesseract opcional)
     pdf.py            PyMuPDF, con OCR por página cuando hace falta
-ui/                   PyQt6: paneles, tour guiado, modal de descarga
+ui/                   PyQt6: paneles, tour guiado, aviso de actualización
 ```
-
-Los motores no conocen Qt y devuelven siempre `Segment[]`; el worker es el
-único puente con la interfaz. `formatter.py` es el único módulo que decide cómo
-se ve el texto final.
 
 ### Por qué estas librerías
 
@@ -114,8 +160,7 @@ se ve el texto final.
 | `rapidocr-onnxruntime` | `easyocr` | No arrastra PyTorch y arranca al instante |
 | `PyAV` | `ffmpeg` del sistema | Trae ffmpeg dentro del paquete: cero dependencias externas |
 
-El resultado es que la app completa cabe en ~400 MB y no requiere instalar
-absolutamente nada en el sistema.
+El resultado cabe en ~500 MB y no requiere instalar absolutamente nada.
 
 > **Nota sobre el OCR en español:** el modelo por defecto de RapidOCR está
 > entrenado en chino e inglés y su diccionario no incluye `á é í ó ú ñ ü`, así
@@ -125,18 +170,39 @@ absolutamente nada en el sistema.
 ## Generar el ejecutable
 
 ```bash
-pip install pyinstaller
 python build_exe.py       # o doble clic en build.bat
 ```
 
-Genera `dist\Lexa\Lexa.exe` en modo *onedir*, sin consola y con el icono
-aplicado. Para distribuirlo, comprime la carpeta `dist\Lexa` completa.
+`build.bat` busca el primer intérprete que tenga PyInstaller instalado, así que
+no depende de cuál sea el `python` del PATH. Al terminar deja en `dist/`:
+
+| Archivo | Para qué |
+|---|---|
+| `Lexa/` | La carpeta ejecutable |
+| `Lexa-1.3.0-windows-x64.zip` | Paquete de distribución e instalación limpia |
+| `SHA256SUMS.txt` | Hashes que verifica el actualizador |
+
+Se construye en modo **onedir** a propósito: con `onefile`, Windows descomprime
+~500 MB en una carpeta temporal en cada arranque.
+
+### Publicar una versión
+
+1. Sube `VERSION` en `core/version.py`.
+2. `python build_exe.py`.
+3. Crea la Release con la etiqueta `v<versión>` y sube los tres archivos:
+   `Lexa.exe`, el zip y `SHA256SUMS.txt`.
+
+El `Lexa.exe` suelto son ~19 MB y basta como actualización cuando solo cambia
+el código, porque PyInstaller embebe todo el Python dentro del propio binario.
+El zip completo solo hace falta cuando cambian las librerías.
 
 ## Dónde guarda las cosas
 
 | Qué | Dónde |
 |---|---|
 | Modelos de IA | `%LOCALAPPDATA%\Lexa\models` |
+| Caché de transcripciones | `%LOCALAPPDATA%\Lexa\cache` (tope 200 MB, se poda sola) |
+| Actualizaciones descargadas | `%LOCALAPPDATA%\Lexa\updates` |
 | Configuración | `%APPDATA%\Lexa\config.json` |
 | Log de errores de arranque | `%APPDATA%\Lexa\error.log` |
 | Resultados | `Documentos\Lexa` (configurable) |
@@ -150,14 +216,18 @@ devuelve todos los ajustes a sus valores por defecto.
   memoria una sola vez; a partir del segundo archivo va a velocidad normal.
 - **Activar «Identificar hablantes» añade un 30-40 % al tiempo de proceso.**
   Por eso viene desactivado.
+- **Una grabación con poca voz detectable tarda varias veces más.** El filtro de
+  silencios (Silero VAD) da por silencio la voz lejana y reverberada de una
+  sala: en una grabación de aula llegó a descartar el 94 % del audio. Cuando
+  Lexa detecta que el filtro conserva menos de la mitad, lo desactiva y
+  transcribe el archivo entero. Se avisa en el registro, y es la diferencia
+  entre 126 palabras y 2.157 sobre el mismo archivo de 17 minutos.
+- **Windows SmartScreen avisa en la primera ejecución.** El binario no está
+  firmado; un certificado de firma cuesta cientos de dólares al año. El
+  `SHA256SUMS.txt` permite verificar que la descarga es la publicada.
 - **Un video sin pista de audio** produce un error explícito en vez de un
   resultado vacío.
 
 ## Licencia
 
 MIT.
-
-Los modelos que descarga son de terceros y mantienen sus propias licencias:
-Whisper (MIT, OpenAI), pyannote-segmentation-3.0 (MIT), 3D-Speaker CAM++
-(Apache 2.0), PP-OCRv5 (Apache 2.0). Las fuentes Noto Sans incluidas están bajo
-SIL Open Font License 1.1.
