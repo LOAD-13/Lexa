@@ -9,7 +9,7 @@ comparando el texto tal cual.
 """
 from __future__ import annotations
 
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 
 # Repositorio del que se descargan las actualizaciones.
 GITHUB_REPO = "LOAD-13/Lexa"
