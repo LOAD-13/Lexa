@@ -85,10 +85,21 @@ class ProcessingWorker(QThread):
     # ── Audio y video ────────────────────────────────────────────────────────
     def _process_speech(self, item: FileItem) -> tuple[List[Segment], float]:
         from core.engines import media, asr
+        from core import cache
 
         if not self.config.transcribe_audio:
             self._log("warn", f"{item.name} omitido: la transcripción está desactivada")
             return [], 0.0
+
+        # La cache se consulta antes de decodificar: si acierta, nos ahorramos
+        # tambien leer el archivo entero, que en un video son varios segundos.
+        cache_key = cache.key_for(item.path, self.config)
+        cached = cache.load(cache_key)
+        if cached is not None:
+            self._stage(item, "Recuperando…", 0.5)
+            self._log("info", f"{item.name}: recuperado de la caché, sin reprocesar")
+            self._progress(item, 1.0)
+            return cached, media.probe_duration(item.path)
 
         self._stage(item, "Leyendo audio…", 0.02)
         audio = media.load_audio(item.path)
@@ -105,10 +116,17 @@ class ProcessingWorker(QThread):
             model_name=self.config.whisper_model,
             progress_callback=lambda p: self._progress(item, 0.04 + p * asr_span),
             should_abort=self._aborted,
+            on_notice=lambda level, msg: self._log(level, f"{item.name}: {msg}"),
+            vocabulary=self.config.vocabulary,
         )
 
         if diarize_on and segments and not self._abort:
             segments = self._diarize(item, audio, segments)
+
+        # Solo se guarda lo completo: una transcripcion cortada a medias por el
+        # boton de parar volveria mañana como si fuera el resultado bueno.
+        if not self._abort:
+            cache.store(cache_key, segments)
 
         self._progress(item, 1.0)
         return segments, duration
