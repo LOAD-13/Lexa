@@ -88,6 +88,34 @@ def ensure_icon() -> str:
     return ico
 
 
+def ensure_not_running() -> None:
+    """Aborta si hay una instancia de Lexa abierta desde dist/.
+
+    Windows no deja reemplazar un ejecutable en uso. Sin esta comprobacion,
+    rmtree lo saltaba en silencio (va con ignore_errors), PyInstaller tampoco
+    podia sobrescribirlo, y el script terminaba anunciando exito con el binario
+    ANTERIOR en su sitio. Se empaquetaba y se publicaba una version vieja con
+    el numero de la nueva.
+    """
+    exe = os.path.join(DIST, "Lexa", "Lexa.exe")
+    if not os.path.isfile(exe):
+        return
+    try:
+        # Abrirlo para escritura. Renombrarlo NO sirve como prueba: Windows lo
+        # permite aunque este en uso, que es justo en lo que se apoya el
+        # actualizador de la propia aplicacion. Lo que bloquea es la escritura
+        # sobre un binario que esta mapeado en memoria.
+        with open(exe, "r+b"):
+            pass
+    except OSError:
+        raise SystemExit(
+            "Lexa esta abierta desde dist/Lexa y Windows no deja reemplazar "
+            "su ejecutable.\n\n"
+            "Cierrala y vuelve a compilar. Si no se cierra, revisa que no "
+            "quede el proceso Lexa.exe en el Administrador de tareas."
+        )
+
+
 def main() -> int:
     try:
         import PyInstaller  # noqa: F401
@@ -98,6 +126,7 @@ def main() -> int:
         )
 
     icon = ensure_icon()
+    ensure_not_running()
 
     for folder in (DIST, BUILD):
         if os.path.isdir(folder):
