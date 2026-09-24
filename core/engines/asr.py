@@ -23,6 +23,18 @@ _MODEL_CACHE: dict[tuple, object] = {}
 # recortando silencio.
 _MIN_VAD_COVERAGE = 0.5
 
+# La cobertura sola no basta. En una nota de voz de WhatsApp el VAD conservaba
+# el 62 % —por encima del umbral— pero entre lo que tiraba habia un hueco de
+# ocho segundos con el 83 % de la energia de la voz: no era silencio, era
+# habla. Mirar cuanto se descarta no dice nada; hay que mirar QUE se descarta.
+#
+# Solo se miran los huecos largos. Los cortos son pausas entre palabras donde
+# el VAD recorta bordes de la propia voz, y eso ensucia la medida sin aportar:
+# ahi no se pierde contenido. Medido con ese filtro: 0.77 en el archivo roto
+# frente a 0.26 en uno con silencio de verdad. El corte va entre los dos.
+_LONG_GAP_SECS = 1.5
+_MAX_DISCARDED_ENERGY = 0.45
+
 
 def detect_device() -> tuple[str, str]:
     """Elige el mejor backend disponible: (device, compute_type).
@@ -147,6 +159,45 @@ _MIN_CHARS_PER_SEC = 2.0
 _TAIL_MARGIN_SECS = 30.0
 
 
+def discarded_energy(audio: np.ndarray, speech: Optional[list]) -> float:
+    """Energia de lo que el VAD descarta, en proporcion a la que conserva.
+
+    Cerca de 0 significa que lo recortado es silencio de verdad. Cerca de 1,
+    que suena igual que la voz y por tanto probablemente lo sea.
+
+    Devuelve 0.0 cuando no hay nada que comparar (sin VAD, o el VAD no recorta
+    nada), para no desactivar el filtro por falta de datos.
+    """
+    if not speech or len(audio) == 0:
+        return 0.0
+
+    mascara = np.zeros(len(audio), dtype=bool)
+    for tramo in speech:
+        mascara[tramo["start"]:tramo["end"]] = True
+
+    voz = audio[mascara]
+    if len(voz) == 0:
+        return 0.0
+    rms_voz = float(np.sqrt(np.mean(np.square(voz))))
+    if rms_voz <= 0:
+        return 0.0
+
+    # Solo los huecos largos: en los cortos el VAD recorta bordes de la propia
+    # voz, lo que sube la medida sin que se pierda nada aprovechable.
+    minimo = int(_LONG_GAP_SECS * SAMPLE_RATE)
+    huecos = []
+    anterior = 0
+    for tramo in list(speech) + [{"start": len(audio), "end": len(audio)}]:
+        if tramo["start"] - anterior >= minimo:
+            huecos.append(audio[anterior:tramo["start"]])
+        anterior = tramo["end"]
+
+    if not huecos:
+        return 0.0
+    resto = np.concatenate(huecos)
+    return float(np.sqrt(np.mean(np.square(resto)))) / rms_voz
+
+
 def _describe_audio(audio: np.ndarray, seconds: float,
                     coverage: Optional[float]) -> str:
     """Resumen legible del material: duracion, volumen y cuanta voz se detecta."""
@@ -200,7 +251,10 @@ def transcribe(
     speech = vad_speech(audio)
     coverage = (sum(t["end"] - t["start"] for t in speech) / len(audio)
                 if speech is not None and len(audio) else None)
-    use_vad = coverage is not None and coverage >= _MIN_VAD_COVERAGE
+    ruido = discarded_energy(audio, speech)
+    use_vad = (coverage is not None
+               and coverage >= _MIN_VAD_COVERAGE
+               and ruido <= _MAX_DISCARDED_ENERGY)
 
     # Frontera tras la cual ya no queda voz que transcribir. Solo tiene sentido
     # si el VAD detecto algo: sin detecciones no hay nada en que basarse.
@@ -213,10 +267,15 @@ def transcribe(
         # vea con que material se esta trabajando en vez de descubrirlo al final.
         on_notice("info", _describe_audio(audio, total_secs, coverage))
         if not use_vad:
+            # Se dice cual de las dos senales salto: no es lo mismo una
+            # grabacion de sala que una nota de voz comprimida, y saberlo
+            # ayuda a entender por que ese archivo concreto tarda mas.
+            motivo = ("el filtro descartaría habla"
+                      if ruido > _MAX_DISCARDED_ENERGY
+                      else "se detecta poca voz")
             on_notice(
                 "warn",
-                "voz poco marcada (micrófono lejano o con eco): se transcribe el "
-                "audio completo, tardará más",
+                f"{motivo}: se transcribe el audio completo, tardará más",
             )
 
     segments_iter, info = model.transcribe(

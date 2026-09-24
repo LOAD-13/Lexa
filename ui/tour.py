@@ -451,9 +451,9 @@ def build_steps(window) -> List[TourStep]:
                 "El ritmo muestra cuánto audio proceso por segundo: 2.4x quiere "
                 "decir que en un segundo avanzo 2,4 de grabación. Sube y baja "
                 "según lo denso que venga el audio.\n\n"
-                "En el registro aviso de lo que encuentro: si la grabación tiene "
-                "poca voz o el micrófono estaba lejos, y si descarto frases que "
-                "me inventé sobre el silencio."
+                "En el registro aviso de lo que encuentro: si la grabación trae "
+                "poca voz, si el filtro de silencios se estaba comiendo habla, "
+                "y si descarto frases que me inventé sobre el silencio."
             ),
             target=lambda: window._footer,
             padding=4,
