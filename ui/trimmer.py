@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
 from core.models import FileItem
 from ui import theme as T
 from ui.waveform import Waveform, _reloj
+from ui.widgets import Panel
 
 _SPEEDS = [0.5, 0.75, 1.0, 1.5, 2.0]
 
@@ -119,24 +120,35 @@ class TrimPanel(QWidget):
         self._sel_waits = 0
         self._loader: Optional[_AudioLoader] = None
         self._watch: Optional[QTimer] = None
-        self._fullscreen = False
 
-        self.setStyleSheet(f"background: {T.PANEL};")
+        self.setStyleSheet("background: transparent;")
 
-        raiz = QVBoxLayout(self)
-        raiz.setContentsMargins(18, 16, 18, 14)
+        # El editor vive dentro de la misma tarjeta redondeada que la vista
+        # previa a la que sustituye: si va a pelo, corta a ras de los bordes y
+        # se ve como un parche pegado encima.
+        fuera = QVBoxLayout(self)
+        fuera.setContentsMargins(0, 0, 0, 0)
+        fuera.setSpacing(0)
+
+        tarjeta = Panel(padded=False)
+        fuera.addWidget(tarjeta)
+
+        raiz = tarjeta.layout()
+        raiz.setContentsMargins(16, 14, 16, 12)
         raiz.setSpacing(10)
 
         raiz.addWidget(self._build_header())
-        raiz.addWidget(self._build_preview(), stretch=1)
+        raiz.addWidget(self._build_preview(), stretch=3)
 
         self._wave = Waveform()
+        self._wave.setStyleSheet(f"border: 1px solid {T.LINE};"
+                                 f" border-radius: {T.R_SM}px;")
         self._wave.ranges_changed.connect(self._refresh)
         self._wave.seeked.connect(self._seek)
         raiz.addWidget(self._wave)
 
         raiz.addWidget(self._build_controls())
-        raiz.addWidget(self._build_list(), stretch=1)
+        raiz.addWidget(self._build_list(), stretch=2)
         raiz.addWidget(self._build_footer())
 
         self._wave.set_ranges(item.ranges)
@@ -161,21 +173,19 @@ class TrimPanel(QWidget):
             f"background: transparent; color: {T.MUTED}; font-size: 11.5px; "
             f"font-family: Consolas, monospace;")
         lay.addWidget(self._clock)
-        lay.addSpacing(10)
 
-        self._full_btn = self._boton("Pantalla completa", self._toggle_fullscreen,
-                                     ancho=140)
-        lay.addWidget(self._full_btn)
         return fila
 
     def _build_preview(self) -> QWidget:
         caja = QWidget()
         caja.setMinimumHeight(220)
         caja.setStyleSheet(
-            f"background: #000000; border: 1px solid {T.LINE}; "
-            f"border-radius: {T.R_MD}px;")
+            f"background: #000000; border: 1px solid {T.LINE};"
+            f" border-radius: {T.R_MD}px;")
         lay = QVBoxLayout(caja)
-        lay.setContentsMargins(0, 0, 0, 0)
+        # Un pixel de margen para que el video no tape las esquinas redondeadas
+        # del recuadro que lo contiene.
+        lay.setContentsMargins(1, 1, 1, 1)
         self._preview_lay = lay
 
         try:
@@ -229,7 +239,28 @@ class TrimPanel(QWidget):
         self._list_host.setStyleSheet("background: transparent;")
         self._list_lay = QVBoxLayout(self._list_host)
         self._list_lay.setContentsMargins(0, 0, 0, 0)
-        self._list_lay.setSpacing(4)
+        self._list_lay.setSpacing(5)
+
+        cabecera = QLabel("TRAMOS")
+        cabecera.setStyleSheet(
+            f"background: transparent; color: {T.MUTED}; font-size: 10px;"
+            f" font-weight: 600; letter-spacing: 1px;")
+        self._list_lay.addWidget(cabecera)
+
+        # Un panel vacio no dice que hacer. Esta pista desaparece en cuanto
+        # existe el primer tramo.
+        self._hint = QLabel(
+            "Arrastra sobre la onda para elegir qué parte transcribir.\n"
+            "Arrastra los bordes para ajustarla, o por dentro para moverla.")
+        self._hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._hint.setWordWrap(True)
+        self._hint.setMinimumHeight(74)
+        self._hint.setStyleSheet(
+            f"background: {T.PANEL2}; border: 1px dashed {T.LINE};"
+            f" border-radius: {T.R_MD}px; color: {T.DIM}; font-size: 12px;"
+            f" line-height: 150%;")
+        self._list_lay.addWidget(self._hint)
+
         self._list_lay.addStretch()
         scroll.setWidget(self._list_host)
         return scroll
@@ -274,50 +305,6 @@ class TrimPanel(QWidget):
                 f" border: 1px solid {T.LINE}; border-radius: {T.R_SM}px;"
                 f" font-size: 12px; }}"
                 f"QPushButton:hover {{ border-color: {T.MUTED}; }}")
-
-    def _toggle_fullscreen(self) -> None:
-        """Agranda el video a toda la pantalla y vuelve.
-
-        Se saca el widget de video a una ventana propia sin marco en lugar de
-        maximizar el panel: asi ocupa la pantalla entera de verdad, y al salir
-        vuelve a su hueco sin tocar el resto de la interfaz.
-        """
-        if self._video is None:
-            return
-        if not self._fullscreen:
-            self._video.setParent(None)
-            self._video.setWindowFlags(Qt.WindowType.Window
-                                       | Qt.WindowType.FramelessWindowHint)
-            self._video.showFullScreen()
-            self._video.installEventFilter(self)
-            self._fullscreen = True
-            self._full_btn.setText("Salir")
-        else:
-            self._exit_fullscreen()
-
-    def _exit_fullscreen(self) -> None:
-        if not self._fullscreen or self._video is None:
-            return
-        self._video.removeEventFilter(self)
-        self._video.setWindowFlags(Qt.WindowType.Widget)
-        self._preview_lay.addWidget(self._video)
-        self._video.showNormal()
-        self._video.setVisible(True)
-        self._fullscreen = False
-        self._full_btn.setText("Pantalla completa")
-
-    def eventFilter(self, obj, event):
-        # Escape y doble clic salen de pantalla completa: es lo que la gente
-        # intenta sin pensar.
-        from PyQt6.QtCore import QEvent
-        if obj is self._video and self._fullscreen:
-            if event.type() == QEvent.Type.KeyPress and                     event.key() == Qt.Key.Key_Escape:
-                self._exit_fullscreen()
-                return True
-            if event.type() == QEvent.Type.MouseButtonDblClick:
-                self._exit_fullscreen()
-                return True
-        return super().eventFilter(obj, event)
 
     # -- Reproductor ----------------------------------------------------------
     def _start_player(self) -> None:
@@ -503,14 +490,18 @@ class TrimPanel(QWidget):
 
     # -- Lista y resumen ------------------------------------------------------
     def _refresh(self) -> None:
-        while self._list_lay.count() > 1:
-            fila = self._list_lay.takeAt(0)
-            if fila.widget():
-                fila.widget().deleteLater()
+        # Se quitan solo las filas: la cabecera, la pista y el hueco elastico
+        # son fijos y viven en los extremos.
+        for i in reversed(range(self._list_lay.count())):
+            w = self._list_lay.itemAt(i).widget()
+            if w is not None and getattr(w, "_es_fila_tramo", False):
+                self._list_lay.takeAt(i)
+                w.deleteLater()
 
         tramos = self._wave.ranges()
+        self._hint.setVisible(not tramos)
         for i, (a, b) in enumerate(tramos):
-            self._list_lay.insertWidget(i, self._build_row(i, a, b))
+            self._list_lay.insertWidget(i + 1, self._build_row(i, a, b))
 
         total = sum(b - a for a, b in tramos)
         if tramos:
@@ -522,19 +513,42 @@ class TrimPanel(QWidget):
 
     def _build_row(self, index: int, a: float, b: float) -> QWidget:
         fila = QWidget()
+        fila._es_fila_tramo = True
         fila.setStyleSheet(
             f"background: {T.PANEL2}; border: 1px solid {T.LINE};"
             f" border-radius: {T.R_SM}px;")
         lay = QHBoxLayout(fila)
-        lay.setContentsMargins(10, 5, 6, 5)
+        lay.setContentsMargins(10, 6, 6, 6)
+        lay.setSpacing(10)
 
-        texto = QLabel(f"Tramo {index + 1}    {_reloj(a)} → {_reloj(b)}    "
-                       f"({_reloj(b - a)})")
+        # Punto de color: ata visualmente la fila con su tramo en la onda.
+        punto = QLabel("●")
+        punto.setFixedWidth(12)
+        punto.setStyleSheet(
+            f"background: transparent; border: none; color: {T.ACCENT};"
+            f" font-size: 11px;")
+        lay.addWidget(punto)
+
+        numero = QLabel(f"Tramo {index + 1}")
+        numero.setFixedWidth(64)
+        numero.setStyleSheet(
+            f"background: transparent; border: none; color: {T.FG};"
+            f" font-size: 12px; font-weight: 600;")
+        lay.addWidget(numero)
+
+        texto = QLabel(f"{_reloj(a)} → {_reloj(b)}")
         texto.setStyleSheet(
             f"background: transparent; border: none; color: {T.FG2};"
             f" font-size: 12px; font-family: Consolas, monospace;")
         lay.addWidget(texto)
         lay.addStretch()
+
+        dura = QLabel(_reloj(b - a))
+        dura.setStyleSheet(
+            f"background: {T.ACCENT_SOFT}; border: none; border-radius: 4px;"
+            f" padding: 1px 7px; color: {T.ACCENT}; font-size: 11px;"
+            f" font-family: Consolas, monospace;")
+        lay.addWidget(dura)
 
         quitar = QPushButton("✕")
         quitar.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -568,7 +582,6 @@ class TrimPanel(QWidget):
 
     def release(self) -> None:
         """Suelta reproductor y archivos. Se llama al cerrar el panel."""
-        self._exit_fullscreen()
         if self._watch is not None:
             self._watch.stop()
         if self._player is not None:
