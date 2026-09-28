@@ -127,6 +127,7 @@ class MainWindow(QMainWindow):
         self._left.file_selected.connect(self._center.focus_file)
         self._left.file_removed.connect(self._on_file_removed)
         self._left.file_retried.connect(self._on_file_retried)
+        self._left.file_trimmed.connect(self._on_file_trimmed)
         self._left.clear_all.connect(self._on_clear_all)
 
         self._center.copied.connect(lambda msg: self._log("info", msg))
@@ -311,6 +312,39 @@ class MainWindow(QMainWindow):
         self._files = [f for f in self._files if f.id != file_id]
         self._left.remove_file(file_id)
         self._sync_views()
+
+    def _on_file_trimmed(self, file_id: int) -> None:
+        """Abre la ventana de recorte para ese archivo."""
+        item = next((f for f in self._files if f.id == file_id), None)
+        if item is None:
+            return
+        if self._processing:
+            QMessageBox.information(
+                self, "Procesamiento en curso",
+                "Espera a que termine el procesamiento para recortar.",
+            )
+            return
+
+        from PyQt6.QtWidgets import QDialog
+        from ui.trimmer import TrimDialog
+
+        dialogo = TrimDialog(item, self)
+        if dialogo.exec() == QDialog.DialogCode.Accepted:
+            item.ranges = dialogo.ranges()
+            # El archivo vuelve a la cola: su resultado anterior ya no
+            # corresponde a lo que se va a transcribir ahora.
+            if item.status == FileStatus.DONE:
+                item.status = FileStatus.PENDING
+                item.segments = []
+                item.result = None
+                item.progress = 0.0
+            self._sync_views()
+            if item.ranges:
+                from core.engines.media import format_ranges
+                self._log("info", f"{item.name}: se transcribirán los tramos "
+                                  f"{format_ranges(item.ranges)}")
+            else:
+                self._log("info", f"{item.name}: recorte quitado, se transcribirá entero")
 
     def _on_file_retried(self, file_id: int) -> None:
         item = self._find(file_id)

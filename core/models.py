@@ -56,6 +56,9 @@ class FileItem:
     error: Optional[str] = None
     duration: float = 0.0                            # segundos de audio/video
     elapsed: float = 0.0                             # segundos que tardo en procesarse
+    # Tramos (inicio, fin) en segundos que se transcribiran. Vacio = todo el
+    # archivo, que es el comportamiento de siempre.
+    ranges: List[tuple] = field(default_factory=list)
 
     @property
     def name(self) -> str:
@@ -64,6 +67,11 @@ class FileItem:
     @property
     def stem(self) -> str:
         return os.path.splitext(self.name)[0]
+
+    @property
+    def trimmed_secs(self) -> float:
+        """Segundos que se van a transcribir: la suma de los tramos."""
+        return sum(b - a for a, b in self.ranges) if self.ranges else self.duration
 
     @property
     def size_str(self) -> str:

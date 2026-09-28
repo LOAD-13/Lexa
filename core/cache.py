@@ -52,7 +52,7 @@ def _file_fingerprint(path: str) -> Optional[str]:
         return None
 
 
-def key_for(path: str, config: AppConfig) -> Optional[str]:
+def key_for(path: str, config: AppConfig, ranges=None) -> Optional[str]:
     """Clave unica de (archivo + ajustes que afectan al resultado).
 
     Las marcas de tiempo y el formato de exportacion NO entran: solo cambian
@@ -69,6 +69,10 @@ def key_for(path: str, config: AppConfig) -> Optional[str]:
         config.whisper_model,
         config.vocabulary,
         "spk" if config.include_speakers else "",
+        # Los tramos cambian que audio se transcribe, asi que cambian el
+        # resultado. Sin esto, recortar un archivo ya procesado devolveria la
+        # transcripcion entera de la vez anterior.
+        ";".join(f"{a:.3f}-{b:.3f}" for a, b in (ranges or [])),
     ]
     return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()[:32]
 

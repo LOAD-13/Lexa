@@ -432,7 +432,7 @@ class RateChart(QWidget):
         area.closeSubpath()
 
         fill = QLinearGradient(0, top, 0, top + plot_h)
-        fill.setColorAt(0.0, QColor(T.ACCENT_SOFT))
+        fill.setColorAt(0.0, QColor(*T.rgba(T.ACCENT_SOFT)))
         fill.setColorAt(1.0, QColor(0, 0, 0, 0))
         p.fillPath(area, QBrush(fill))
 

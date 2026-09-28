@@ -12,6 +12,8 @@ from typing import List
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from dataclasses import replace
+
 from core.models import AppConfig, FileItem, FileKind, FileStatus, LogEntry, Segment
 from core import formatter as F
 
@@ -93,7 +95,8 @@ class ProcessingWorker(QThread):
 
         # La cache se consulta antes de decodificar: si acierta, nos ahorramos
         # tambien leer el archivo entero, que en un video son varios segundos.
-        cache_key = cache.key_for(item.path, self.config)
+        tramos = media.normalize_ranges(item.ranges, item.duration)
+        cache_key = cache.key_for(item.path, self.config, tramos)
         cached = cache.load(cache_key)
         if cached is not None:
             self._stage(item, "Recuperando…", 0.5)
@@ -102,8 +105,11 @@ class ProcessingWorker(QThread):
             return cached, media.probe_duration(item.path)
 
         self._stage(item, "Leyendo audio…", 0.02)
-        audio = media.load_audio(item.path)
+        audio = media.load_audio(item.path, tramos)
         duration = len(audio) / media.SAMPLE_RATE
+        if tramos:
+            recortado = media.format_ranges(tramos)
+            self._log("info", f"{item.name}: solo los tramos {recortado}")
 
         diarize_on = self.config.include_speakers
         # Con diarizacion, la transcripcion ocupa el primer 70% de la barra.
@@ -122,6 +128,17 @@ class ProcessingWorker(QThread):
 
         if diarize_on and segments and not self._abort:
             segments = self._diarize(item, audio, segments)
+
+        # Los tiempos vienen referidos al audio recortado. Se devuelven al
+        # archivo original para que un SRT sacado de un recorte siga cuadrando
+        # con el video completo.
+        if tramos:
+            segments = [
+                replace(seg,
+                        start=media.map_time(seg.start, tramos),
+                        end=media.map_time(seg.end, tramos))
+                for seg in segments
+            ]
 
         # Solo se guarda lo completo: una transcripcion cortada a medias por el
         # boton de parar volveria mañana como si fuera el resultado bueno.

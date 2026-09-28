@@ -91,8 +91,14 @@ core/engines/media.py   load_audio(path, ranges) decodifica solo esos tramos
 
 ### `media.load_audio(path, ranges=None)`
 
-Con tramos, decodifica solo esos y los concatena. Usa el `seek` de PyAV: cortar
-del minuto 40 no cuesta decodificar los 40 anteriores.
+Con tramos, decodifica el archivo y devuelve solo esos, concatenados.
+
+Se descarto usar el `seek` de PyAV para saltar directamente al minuto 40. Lo
+que ahorra es tiempo de *decodificacion*, que en un archivo de una hora son
+unas decenas de segundos, mientras que transcribirlo son minutos u horas: el
+ahorro es marginal. A cambio, el seek trae precision por fotogramas clave y
+desfases de segundos, justo en la parte donde un error silencioso arruina el
+recorte. Trocear el PCM ya decodificado es exacto y se prueba de forma trivial.
 
 ### `media.map_time(t, ranges)`
 

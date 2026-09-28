@@ -1,6 +1,8 @@
 """Design tokens matching the Lexa design system."""
 
 # ── Backgrounds ────────────────────────────────────────────
+import re
+
 BG       = "#0d0e10"
 PANEL    = "#16181c"
 PANEL2   = "#1c1f24"
@@ -30,6 +32,19 @@ DANGER_SOFT = "rgba(201, 114, 114, 36)"
 INFO_SOFT   = "rgba(123, 142, 187, 36)"
 
 # ── Radii ────────────────────────────────────────────────────
+def rgba(token: str) -> tuple:
+    """Convierte un token «rgba(r, g, b, a)» del tema en (r, g, b, a).
+
+    Las hojas de estilo de Qt entienden esa notacion, pero QColor NO: le pasa
+    la cadena tal cual, no la reconoce y devuelve negro opaco sin avisar de
+    nada. Al pintar a mano hay que desmontarla antes.
+    """
+    numeros = [int(float(n)) for n in re.findall(r"[\d.]+", token)]
+    while len(numeros) < 4:
+        numeros.append(255)
+    return tuple(numeros[:4])
+
+
 R_SM = 7
 R_MD = 8
 R_LG = 10

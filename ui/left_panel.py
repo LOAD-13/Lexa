@@ -24,6 +24,7 @@ class LeftPanel(QWidget):
     file_selected = pyqtSignal(int)
     file_removed  = pyqtSignal(int)
     file_retried  = pyqtSignal(int)
+    file_trimmed  = pyqtSignal(int)
     clear_all     = pyqtSignal()
 
     def __init__(self, parent=None):
@@ -92,6 +93,7 @@ class LeftPanel(QWidget):
         row.clicked.connect(self._on_row_clicked)
         row.removed.connect(self.file_removed)
         row.retried.connect(self.file_retried)
+        row.trimmed.connect(self.file_trimmed)
         self._rows[item.id] = row
         self._rows_lay.insertWidget(self._rows_lay.count() - 1, row)
         self._refresh_header()
@@ -252,6 +254,7 @@ class FileRow(QFrame):
     clicked = pyqtSignal(int)
     removed = pyqtSignal(int)
     retried = pyqtSignal(int)
+    trimmed = pyqtSignal(int)
 
     def __init__(self, item: FileItem, parent=None):
         super().__init__(parent)
@@ -297,6 +300,10 @@ class FileRow(QFrame):
         text_col.addWidget(self._meta)
         top.addLayout(text_col, stretch=1)
 
+        self._trim_btn = _icon_btn("✂", T.FG2, "Elegir qué parte transcribir")
+        self._trim_btn.clicked.connect(lambda: self.trimmed.emit(self._item.id))
+        top.addWidget(self._trim_btn)
+
         self._retry_btn = _icon_btn("↻", T.WARN, "Reintentar este archivo")
         self._retry_btn.clicked.connect(lambda: self.retried.emit(self._item.id))
         self._retry_btn.setVisible(False)
@@ -331,6 +338,12 @@ class FileRow(QFrame):
             words = len((item.result or "").split())
             self._meta.setText(f"Listo · {words:,} palabras".replace(",", "."))
             self._meta.setToolTip("")
+        elif item.ranges:
+            from core.engines.media import format_ranges
+            recorte = _fmt_secs(item.trimmed_secs)
+            total = _fmt_secs(item.duration)
+            self._meta.setText(f"Recortado · {recorte} de {total}")
+            self._meta.setToolTip(format_ranges(item.ranges))
         else:
             self._meta.setText(f"{item.kind.value.capitalize()} · {item.size_str}")
             self._meta.setToolTip("")
@@ -341,6 +354,8 @@ class FileRow(QFrame):
 
         self._bar.set_state(item.progress, item.status)
         self._retry_btn.setVisible(item.status == FileStatus.ERROR)
+        self._trim_btn.setVisible(item.kind.is_speech
+                                  and item.status != FileStatus.PROCESSING)
         self._apply_style()
 
     def set_selected(self, value: bool) -> None:
@@ -439,3 +454,10 @@ def _elide(text: str, limit: int) -> str:
         return text
     keep = (limit - 1) // 2
     return f"{text[:keep]}…{text[-keep:]}"
+
+
+def _fmt_secs(t: float) -> str:
+    minutos, segundos = divmod(int(max(0.0, t)), 60)
+    horas, minutos = divmod(minutos, 60)
+    return (f"{horas}:{minutos:02d}:{segundos:02d}" if horas
+            else f"{minutos}:{segundos:02d}")
