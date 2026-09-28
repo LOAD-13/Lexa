@@ -325,26 +325,35 @@ class MainWindow(QMainWindow):
             )
             return
 
-        from PyQt6.QtWidgets import QDialog
-        from ui.trimmer import TrimDialog
+        from ui.trimmer import TrimPanel
 
-        dialogo = TrimDialog(item, self)
-        if dialogo.exec() == QDialog.DialogCode.Accepted:
-            item.ranges = dialogo.ranges()
-            # El archivo vuelve a la cola: su resultado anterior ya no
-            # corresponde a lo que se va a transcribir ahora.
-            if item.status == FileStatus.DONE:
-                item.status = FileStatus.PENDING
-                item.segments = []
-                item.result = None
-                item.progress = 0.0
-            self._sync_views()
-            if item.ranges:
-                from core.engines.media import format_ranges
-                self._log("info", f"{item.name}: se transcribirán los tramos "
-                                  f"{format_ranges(item.ranges)}")
-            else:
-                self._log("info", f"{item.name}: recorte quitado, se transcribirá entero")
+        panel = TrimPanel(item)
+        panel.applied.connect(self._on_trim_applied)
+        panel.cancelled.connect(self._center.hide_trimmer)
+        self._center.show_trimmer(panel)
+
+    def _on_trim_applied(self, file_id: int, ranges) -> None:
+        self._center.hide_trimmer()
+        item = next((f for f in self._files if f.id == file_id), None)
+        if item is None:
+            return
+
+        item.ranges = list(ranges)
+        # El archivo vuelve a la cola: su resultado anterior ya no corresponde
+        # a lo que se va a transcribir ahora.
+        if item.status == FileStatus.DONE:
+            item.status = FileStatus.PENDING
+            item.segments = []
+            item.result = None
+            item.progress = 0.0
+        self._sync_views()
+
+        if item.ranges:
+            from core.engines.media import format_ranges
+            self._log("info", f"{item.name}: se transcribirán los tramos "
+                              f"{format_ranges(item.ranges)}")
+        else:
+            self._log("info", f"{item.name}: recorte quitado, se transcribirá entero")
 
     def _on_file_retried(self, file_id: int) -> None:
         item = self._find(file_id)

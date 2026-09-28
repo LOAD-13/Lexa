@@ -41,6 +41,7 @@ class CenterPanel(QWidget):
         self._config = config
         self._items: List[FileItem] = []
         self._focus_id: Optional[int] = None
+        self._trimmer = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -48,6 +49,7 @@ class CenterPanel(QWidget):
 
         card = Panel(padded=False)
         root.addWidget(card)
+        self._card = card
 
         # ── Cabecera ─────────────────────────────────────────────────
         header = QWidget()
@@ -149,6 +151,29 @@ class CenterPanel(QWidget):
     def update_items(self, items: List[FileItem]) -> None:
         self._items = items
         self.refresh()
+
+    # -- Recorte embebido -----------------------------------------------------
+    def show_trimmer(self, panel) -> None:
+        """Pone el editor de tramos en el sitio de la vista previa.
+
+        El usuario pidio no abrir otra ventana: tener que moverla para ver la
+        cola rompia la sensacion de una sola pantalla.
+        """
+        self.hide_trimmer()
+        self._trimmer = panel
+        self._card.setVisible(False)
+        self.layout().addWidget(panel)
+        panel.setVisible(True)
+        panel.setFocus()
+
+    def hide_trimmer(self) -> None:
+        if getattr(self, "_trimmer", None) is None:
+            return
+        self.layout().removeWidget(self._trimmer)
+        self._trimmer.setParent(None)
+        self._trimmer.deleteLater()
+        self._trimmer = None
+        self._card.setVisible(True)
 
     def focus_file(self, file_id: int) -> None:
         """Resalta un archivo concreto y desplaza la vista hasta él."""

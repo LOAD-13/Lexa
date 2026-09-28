@@ -1,4 +1,8 @@
-"""Ventana de recorte: reproductor, forma de onda y lista de tramos.
+"""Panel de recorte: reproductor, forma de onda y lista de tramos.
+
+Vive dentro de la ventana principal, ocupando el sitio de la vista
+previa mientras se elige el tramo. Una ventana aparte obligaba a
+moverla para ver la cola y rompia la sensacion de una sola pantalla.
 
 El reproductor usa QMediaPlayer, que se apoya en los codecs de Windows. Puede
 no abrir un mkv o un webm que Lexa si transcribe, asi que cuando falla se cae a
@@ -11,10 +15,10 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
-from PyQt6.QtCore import Qt, QThread, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QColor, QImage, QPainter, QPixmap
+from PyQt6.QtCore import Qt, QRectF, QThread, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import QColor, QImage, QPainter, QPainterPath, QPixmap
 from PyQt6.QtWidgets import (
-    QDialog, QHBoxLayout, QLabel, QPushButton, QScrollArea,
+    QHBoxLayout, QLabel, QPushButton, QScrollArea,
     QVBoxLayout, QWidget,
 )
 
@@ -47,8 +51,59 @@ class _AudioLoader(QThread):
             self.failed.emit(str(exc) or exc.__class__.__name__)
 
 
-class TrimDialog(QDialog):
-    """Devuelve los tramos elegidos. Lista vacia = archivo entero."""
+class _PlayButton(QPushButton):
+    """Play y pausa dibujados en vez de con glifos.
+
+    «▶» y «⏸» dependen de la fuente instalada: cambian de tamano entre si,
+    se desalinean y en algunos equipos salen como un cuadrado vacio. Dos
+    triangulos y dos barras pintados a mano siempre se ven igual.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._playing = False
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedSize(38, 30)
+        self.setStyleSheet(
+            f"QPushButton {{ background: {T.PANEL2}; border: 1px solid {T.LINE};"
+            f" border-radius: {T.R_SM}px; }}"
+            f"QPushButton:hover {{ border-color: {T.MUTED}; }}")
+
+    def set_playing(self, value: bool) -> None:
+        self._playing = value
+        self.update()
+
+    def is_playing(self) -> bool:
+        return self._playing
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(T.ACCENT))
+        cx, cy = self.width() / 2, self.height() / 2
+
+        if self._playing:
+            ancho, alto, hueco = 3.0, 12.0, 3.5
+            p.drawRect(QRectF(cx - hueco / 2 - ancho, cy - alto / 2, ancho, alto))
+            p.drawRect(QRectF(cx + hueco / 2, cy - alto / 2, ancho, alto))
+        else:
+            lado = 12.0
+            camino = QPainterPath()
+            camino.moveTo(cx - lado / 3, cy - lado / 2)
+            camino.lineTo(cx + lado * 2 / 3, cy)
+            camino.lineTo(cx - lado / 3, cy + lado / 2)
+            camino.closeSubpath()
+            p.drawPath(camino)
+        p.end()
+
+
+class TrimPanel(QWidget):
+    """Editor de tramos embebido. Lista vacia = archivo entero."""
+
+    applied = pyqtSignal(int, object)    # file_id, tramos
+    cancelled = pyqtSignal()
 
     def __init__(self, item: FileItem, parent=None):
         super().__init__(parent)
@@ -59,11 +114,14 @@ class TrimDialog(QDialog):
         self._video = None
         self._frames = None            # respaldo con PyAV
         self._only_selection = False
+        self._sel_index = 0
+        self._sel_landed = False
+        self._sel_waits = 0
         self._loader: Optional[_AudioLoader] = None
+        self._watch: Optional[QTimer] = None
+        self._fullscreen = False
 
-        self.setWindowTitle(f"Recortar · {item.name}")
-        self.setMinimumSize(880, 620)
-        self.setStyleSheet(f"QDialog {{ background: {T.PANEL}; }}")
+        self.setStyleSheet(f"background: {T.PANEL};")
 
         raiz = QVBoxLayout(self)
         raiz.setContentsMargins(18, 16, 18, 14)
@@ -103,6 +161,11 @@ class TrimDialog(QDialog):
             f"background: transparent; color: {T.MUTED}; font-size: 11.5px; "
             f"font-family: Consolas, monospace;")
         lay.addWidget(self._clock)
+        lay.addSpacing(10)
+
+        self._full_btn = self._boton("Pantalla completa", self._toggle_fullscreen,
+                                     ancho=140)
+        lay.addWidget(self._full_btn)
         return fila
 
     def _build_preview(self) -> QWidget:
@@ -113,6 +176,7 @@ class TrimDialog(QDialog):
             f"border-radius: {T.R_MD}px;")
         lay = QVBoxLayout(caja)
         lay.setContentsMargins(0, 0, 0, 0)
+        self._preview_lay = lay
 
         try:
             from PyQt6.QtMultimediaWidgets import QVideoWidget
@@ -137,7 +201,8 @@ class TrimDialog(QDialog):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(8)
 
-        self._play_btn = self._boton("▶", self._toggle_play, ancho=44)
+        self._play_btn = _PlayButton()
+        self._play_btn.clicked.connect(self._toggle_play)
         lay.addWidget(self._play_btn)
 
         lay.addSpacing(10)
@@ -150,7 +215,7 @@ class TrimDialog(QDialog):
         self._set_speed(1.0)
 
         lay.addStretch()
-        self._sel_btn = self._boton("▶ Solo lo seleccionado", self._play_selection,
+        self._sel_btn = self._boton("Reproducir la selección", self._play_selection,
                                     ancho=170)
         lay.addWidget(self._sel_btn)
         return fila
@@ -181,8 +246,8 @@ class TrimDialog(QDialog):
         lay.addStretch()
 
         lay.addWidget(self._boton("Quitar recorte", self._wave.clear_ranges, ancho=120))
-        lay.addWidget(self._boton("Cancelar", self.reject, ancho=90))
-        aplicar = self._boton("Aplicar", self.accept, ancho=100, principal=True)
+        lay.addWidget(self._boton("Cancelar", self._on_cancel, ancho=90))
+        aplicar = self._boton("Aplicar", self._on_apply, ancho=100, principal=True)
         lay.addWidget(aplicar)
         return fila
 
@@ -209,6 +274,50 @@ class TrimDialog(QDialog):
                 f" border: 1px solid {T.LINE}; border-radius: {T.R_SM}px;"
                 f" font-size: 12px; }}"
                 f"QPushButton:hover {{ border-color: {T.MUTED}; }}")
+
+    def _toggle_fullscreen(self) -> None:
+        """Agranda el video a toda la pantalla y vuelve.
+
+        Se saca el widget de video a una ventana propia sin marco en lugar de
+        maximizar el panel: asi ocupa la pantalla entera de verdad, y al salir
+        vuelve a su hueco sin tocar el resto de la interfaz.
+        """
+        if self._video is None:
+            return
+        if not self._fullscreen:
+            self._video.setParent(None)
+            self._video.setWindowFlags(Qt.WindowType.Window
+                                       | Qt.WindowType.FramelessWindowHint)
+            self._video.showFullScreen()
+            self._video.installEventFilter(self)
+            self._fullscreen = True
+            self._full_btn.setText("Salir")
+        else:
+            self._exit_fullscreen()
+
+    def _exit_fullscreen(self) -> None:
+        if not self._fullscreen or self._video is None:
+            return
+        self._video.removeEventFilter(self)
+        self._video.setWindowFlags(Qt.WindowType.Widget)
+        self._preview_lay.addWidget(self._video)
+        self._video.showNormal()
+        self._video.setVisible(True)
+        self._fullscreen = False
+        self._full_btn.setText("Pantalla completa")
+
+    def eventFilter(self, obj, event):
+        # Escape y doble clic salen de pantalla completa: es lo que la gente
+        # intenta sin pensar.
+        from PyQt6.QtCore import QEvent
+        if obj is self._video and self._fullscreen:
+            if event.type() == QEvent.Type.KeyPress and                     event.key() == Qt.Key.Key_Escape:
+                self._exit_fullscreen()
+                return True
+            if event.type() == QEvent.Type.MouseButtonDblClick:
+                self._exit_fullscreen()
+                return True
+        return super().eventFilter(obj, event)
 
     # -- Reproductor ----------------------------------------------------------
     def _start_player(self) -> None:
@@ -280,10 +389,10 @@ class TrimDialog(QDialog):
         from PyQt6.QtMultimedia import QMediaPlayer
         if self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
             self._player.pause()
-            self._play_btn.setText("▶")
+            self._play_btn.set_playing(False)
         else:
             self._player.play()
-            self._play_btn.setText("⏸")
+            self._play_btn.set_playing(True)
 
     def _set_speed(self, value: float) -> None:
         if self._player is not None:
@@ -305,29 +414,65 @@ class TrimDialog(QDialog):
         if not tramos or self._player is None:
             return
         self._only_selection = True
-        self._player.setPosition(int(tramos[0][0] * 1000))
+        self._goto_range(0)
         self._player.play()
-        self._play_btn.setText("⏸")
+        self._play_btn.set_playing(True)
         self._watch.start()
 
+    def _goto_range(self, index: int) -> None:
+        tramos = self._wave.ranges()
+        if not (0 <= index < len(tramos)):
+            return
+        self._sel_index = index
+        self._sel_landed = False
+        self._sel_waits = 0
+        self._player.setPosition(int(tramos[index][0] * 1000))
+
     def _watch_selection(self) -> None:
+        """Encadena los tramos, respetando que el salto tarda en aplicarse.
+
+        setPosition es asincrono: hasta que el salto no llega, el reproductor
+        sigue devolviendo la posicion anterior. Actuar sobre ese valor era el
+        fallo: si se venia escuchando despues del ultimo tramo, el primer
+        vistazo lo veia fuera de todo y pausaba al instante, de modo que el
+        boton parecia no hacer nada.
+        """
         if not self._only_selection or self._player is None:
             self._watch.stop()
             return
-        t = self._player.position() / 1000.0
+
         tramos = self._wave.ranges()
-        for a, b in tramos:
-            if a <= t <= b:
+        if not tramos or self._sel_index >= len(tramos):
+            self._stop_selection()
+            return
+
+        a, b = tramos[self._sel_index]
+        t = self._player.position() / 1000.0
+
+        if not self._sel_landed:
+            if a - 0.5 <= t <= b + 0.5:
+                self._sel_landed = True
                 return
-        # Fuera de todo tramo: saltar al siguiente que empiece despues.
-        siguientes = [a for a, _ in tramos if a > t]
-        if siguientes:
-            self._player.setPosition(int(min(siguientes) * 1000))
+            self._sel_waits += 1
+            # Si el salto no llega nunca (formato que no admite busqueda) se
+            # deja de esperar en vez de quedarse mirando para siempre.
+            if self._sel_waits > 40:
+                self._stop_selection()
+            return
+
+        if t <= b:
+            return
+        if self._sel_index + 1 < len(tramos):
+            self._goto_range(self._sel_index + 1)
         else:
+            self._stop_selection()
+
+    def _stop_selection(self) -> None:
+        if self._player is not None:
             self._player.pause()
-            self._play_btn.setText("▶")
-            self._only_selection = False
-            self._watch.stop()
+        self._play_btn.set_playing(False)
+        self._only_selection = False
+        self._watch.stop()
 
     def _on_position(self, ms: int) -> None:
         segundos = ms / 1000.0
@@ -413,21 +558,39 @@ class TrimDialog(QDialog):
     def ranges(self) -> List[Tuple[float, float]]:
         return self._wave.ranges()
 
-    def keyPressEvent(self, event) -> None:
-        if event.key() == Qt.Key.Key_Space:
-            self._toggle_play()
-            return
-        if event.key() == Qt.Key.Key_Escape:
-            self.reject()
-            return
-        super().keyPressEvent(event)
+    def _on_apply(self) -> None:
+        self.release()
+        self.applied.emit(self._item.id, self._wave.ranges())
 
-    def closeEvent(self, event) -> None:
+    def _on_cancel(self) -> None:
+        self.release()
+        self.cancelled.emit()
+
+    def release(self) -> None:
+        """Suelta reproductor y archivos. Se llama al cerrar el panel."""
+        self._exit_fullscreen()
+        if self._watch is not None:
+            self._watch.stop()
         if self._player is not None:
-            self._player.stop()
+            # Tolerante a proposito: si el reproductor ya se solto o nunca
+            # llego a crearse del todo, soltarlo no debe tumbar la ventana.
+            try:
+                self._player.stop()
+                self._player.setSource(QUrl())
+            except Exception:
+                pass
         if self._frames is not None:
             try:
                 self._frames.close()
             except Exception:
                 pass
-        super().closeEvent(event)
+            self._frames = None
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_Space:
+            self._toggle_play()
+            return
+        if event.key() == Qt.Key.Key_Escape:
+            self._on_cancel()
+            return
+        super().keyPressEvent(event)
