@@ -306,7 +306,11 @@ class MainWindow(QMainWindow):
             self._log("warn", f"{skipped} archivo(s) de tipo no soportado, omitidos")
         if added:
             self._sync_views()
-            self._log("info", f"{added} archivo(s) añadido(s) a la cola")
+            if self._processing:
+                self._log("info", f"{added} archivo(s) añadido(s) a la cola · "
+                                  f"se procesarán al terminar el actual")
+            else:
+                self._log("info", f"{added} archivo(s) añadido(s) a la cola")
 
     def _on_file_removed(self, file_id: int) -> None:
         self._files = [f for f in self._files if f.id != file_id]
@@ -519,6 +523,19 @@ class MainWindow(QMainWindow):
         if aborted:
             self._title_bar.set_status("Detenido", T.MUTED)
             self._log("warn", "Procesamiento detenido por el usuario")
+            return
+
+        # Lo anadido mientras trabajaba no estaba en la lista que recibio este
+        # worker. En vez de obligar a volver a pulsar el boton, se encadena
+        # otra tanda: la idea es dejarlo trabajando e ir sumando cosas.
+        nuevos = [f for f in self._files if f.status == FileStatus.PENDING]
+        if nuevos:
+            self._log("info", f"Continuando con {len(nuevos)} archivo(s) "
+                              f"añadido(s) mientras tanto")
+            # Aplazado un ciclo: esta llamada llega desde el worker que aun se
+            # esta cerrando, y reemplazar self._worker ahora destruiria el
+            # QThread antes de que termine.
+            QTimer.singleShot(0, lambda: self._start_processing(only=nuevos))
             return
 
         if done and self._config.auto_export:
