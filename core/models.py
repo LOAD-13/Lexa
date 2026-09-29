@@ -172,6 +172,9 @@ class AppConfig:
 
     # Estado de la interfaz (persistido, no editable desde los ajustes)
     tour_completed: bool = False
+    # Ultima version que llego a abrirse. Si al arrancar no coincide con la
+    # actual, es que se acaba de actualizar y toca ensenar las novedades.
+    last_seen_version: str = ""
     window_geometry: str = ""                 # base64 de QByteArray
     h_splitter: list = field(default_factory=list)
     v_splitter: list = field(default_factory=list)

@@ -27,7 +27,7 @@ from ui.left_panel import LeftPanel
 from ui.center_panel import CenterPanel
 from ui.right_panel import RightPanel
 from ui.footer import Footer
-from ui.tour import TourOverlay, build_steps
+from ui.tour import TourOverlay, build_steps, build_whats_new_steps
 from ui.update_banner import UpdateBanner, UpdateCheckThread, UpdateDownloadThread
 from ui.update_dialog import UpdateDialog
 from ui.youtube_dialog import YoutubeDialog
@@ -170,8 +170,18 @@ class MainWindow(QMainWindow):
 
     # ── Tour ─────────────────────────────────────────────────────────────────
     def maybe_start_tour(self) -> None:
+        """Bienvenida para quien llega nuevo; novedades para quien actualizo.
+
+        Nunca las dos: a quien abre Lexa por primera vez el tour completo ya le
+        cuenta lo nuevo, y encadenarle dos recorridos seguidos seria pesado.
+        """
+        from core.version import VERSION
         if not self._config.tour_completed:
+            self._config.last_seen_version = VERSION
             QTimer.singleShot(350, self.start_tour)
+            return
+        if self._config.last_seen_version != VERSION:
+            QTimer.singleShot(500, self.start_whats_new)
 
     def start_tour(self) -> None:
         if self._tour is not None and self._tour.isVisible():
@@ -180,8 +190,25 @@ class MainWindow(QMainWindow):
         self._tour.finished.connect(self._on_tour_finished)
         self._tour.start()
 
+    def start_whats_new(self) -> None:
+        """Recorrido corto de lo que trae esta version."""
+        if self._tour is not None and self._tour.isVisible():
+            return
+        self._tour = TourOverlay(build_whats_new_steps(self), self.centralWidget())
+        self._tour.finished.connect(self._on_whats_new_finished)
+        self._tour.start()
+
+    def _on_whats_new_finished(self) -> None:
+        from core.version import VERSION
+        # Se apunta la version aunque se cierre a medias: quien no quiso verlo
+        # tampoco quiere que le vuelva a salir en cada arranque.
+        self._config.last_seen_version = VERSION
+        save_config(self._config)
+
     def _on_tour_finished(self) -> None:
+        from core.version import VERSION
         self._config.tour_completed = True
+        self._config.last_seen_version = VERSION
         save_config(self._config)
 
     def resizeEvent(self, event) -> None:

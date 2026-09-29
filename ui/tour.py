@@ -472,3 +472,66 @@ def build_steps(window) -> List[TourStep]:
             padding=4,
         ),
     ]
+
+
+def build_whats_new_steps(window) -> List[TourStep]:
+    """Recorrido corto de lo que trae la version 2.0.
+
+    Se ensena una sola vez, la primera vez que se abre Lexa despues de
+    actualizar. Es el mismo mecanismo que el tour de bienvenida, pero contando
+    solo lo nuevo: quien ya usaba Lexa no necesita que le expliquen otra vez
+    como arrastrar un archivo.
+    """
+    return [
+        TourStep(
+            title="Lexa 2.0",
+            body=(
+                "Tres cosas nuevas: ahora puedes elegir qué parte de un audio "
+                "o un vídeo quieres transcribir, traer vídeos de YouTube "
+                "pegando su enlace, y dejar varios archivos en cola para que "
+                "se hagan uno tras otro.\n\nTe las enseño en veinte segundos."
+            ),
+        ),
+        TourStep(
+            title="1. Transcribe solo la parte que te interesa",
+            body=(
+                "En cada archivo de la cola hay un botón de recorte. Abre un "
+                "editor aquí mismo, con la onda del sonido y el vídeo.\n\n"
+                "Arrastra sobre la onda para marcar un tramo. Un clic suelto "
+                "mueve el cursor; arrastrando los bordes ajustas el tramo, y "
+                "por dentro lo mueves entero. Puedes marcar varios tramos del "
+                "mismo archivo y se transcriben todos, con sus tiempos "
+                "originales.\n\nDe una clase de dos horas puedes sacar solo "
+                "los veinte minutos que importan."
+            ),
+            target=lambda: window._left.queue_panel,
+            padding=6,
+        ),
+        TourStep(
+            title="2. Trae vídeos de YouTube",
+            body=(
+                "Pulsa «Pegar enlace» y suelta la dirección de un vídeo; "
+                "también puedes arrastrar el enlace desde el navegador.\n\n"
+                "Lexa lo descarga a una carpeta suya, lo mete en la cola y "
+                "desde ahí lo recortas como cualquier otro archivo. En los "
+                "ajustes puedes pedir que baje solo el audio: pesa unas cuatro "
+                "veces menos, y ahí mismo vacías lo descargado cuando ya no lo "
+                "necesites."
+            ),
+            target=lambda: window._left.dropzone,
+            padding=6,
+        ),
+        TourStep(
+            title="3. Deja la cola trabajando",
+            body=(
+                "Suelta todos los archivos que quieras y pulsa una sola vez: "
+                "se procesan uno tras otro.\n\nY si añades otro mientras Lexa "
+                "ya está trabajando, lo recoge al terminar con el actual. "
+                "Puedes dejarla transcribiendo e irte.\n\nSi quieres volver a "
+                "ver esto, el botón «?» de arriba a la derecha tiene el "
+                "recorrido completo."
+            ),
+            target=lambda: window._left.queue_panel,
+            padding=6,
+        ),
+    ]
