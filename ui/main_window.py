@@ -180,7 +180,7 @@ class MainWindow(QMainWindow):
             self._config.last_seen_version = VERSION
             QTimer.singleShot(350, self.start_tour)
             return
-        if self._config.last_seen_version != VERSION:
+        if _serie(self._config.last_seen_version) != _serie(VERSION):
             QTimer.singleShot(500, self.start_whats_new)
 
     def start_tour(self) -> None:
@@ -442,6 +442,9 @@ class MainWindow(QMainWindow):
         panel = TrimPanel(item)
         panel.applied.connect(self._on_trim_applied)
         panel.cancelled.connect(self._center.hide_trimmer)
+        # Si al equipo le falta algo para reproducir, que quede escrito: sin
+        # esto la unica pista era una frase en pantalla que nadie podia copiar.
+        panel.notice.connect(self._log)
         self._center.show_trimmer(panel)
 
     def _on_trim_applied(self, file_id: int, ranges) -> None:
@@ -761,6 +764,20 @@ class MainWindow(QMainWindow):
             self._yt_thread.wait(3000)
         self._save_layout()
         super().closeEvent(event)
+
+
+def _serie(version: str) -> tuple:
+    """Version mayor y menor, sin el parche.
+
+    Los recuadros de novedades cuentan funciones nuevas, y un parche no trae
+    ninguna: comparando la version entera, un 2.0.1 le habria vuelto a sacar el
+    recorrido entero a quien ya lo vio en la 2.0.
+    """
+    from core.version import version_tuple
+    try:
+        return version_tuple(version or "0.0.0")[:2]
+    except Exception:
+        return (0, 0)
 
 
 def _safe_probe(path: str) -> float:

@@ -7,7 +7,7 @@
 **Convierte audio, video, imágenes y PDFs en texto. Todo en tu computadora.**
 
 <p>
-<img alt="Versión" src="https://img.shields.io/badge/versión-2.0.0-6ec99a?style=flat-square&labelColor=1c1f24">
+<img alt="Versión" src="https://img.shields.io/badge/versión-2.0.1-6ec99a?style=flat-square&labelColor=1c1f24">
 <img alt="Plataforma" src="https://img.shields.io/badge/PLATAFORMA-WINDOWS-0078d4?style=flat-square&labelColor=1c1f24">
 <img alt="Python" src="https://img.shields.io/badge/Python-3.10+-3776ab?style=flat-square&labelColor=1c1f24">
 <img alt="PyQt6" src="https://img.shields.io/badge/PyQt6-6.6-41cd52?style=flat-square&labelColor=1c1f24">
@@ -114,7 +114,7 @@ instalar nada.
 Verifica la descarga contra el `SHA256SUMS.txt` de la Release:
 
 ```powershell
-Get-FileHash .\Lexa-2.0.0-windows-x64.zip -Algorithm SHA256
+Get-FileHash .\Lexa-2.0.1-windows-x64.zip -Algorithm SHA256
 ```
 
 A partir de la 1.3.3, Lexa comprueba al arrancar si hay versión nueva y la
@@ -192,7 +192,7 @@ no depende de cuál sea el `python` del PATH. Al terminar deja en `dist/`:
 | Archivo | Para qué |
 |---|---|
 | `Lexa/` | La carpeta ejecutable |
-| `Lexa-2.0.0-windows-x64.zip` | Paquete de distribución e instalación limpia |
+| `Lexa-2.0.1-windows-x64.zip` | Paquete de distribución e instalación limpia |
 | `SHA256SUMS.txt` | Hashes que verifica el actualizador |
 
 Se construye en modo **onedir** a propósito: con `onefile`, Windows descomprime
@@ -235,6 +235,10 @@ devuelve todos los ajustes a sus valores por defecto.
   `yt-dlp`. Descargar vídeos va además contra sus condiciones de uso: Lexa lo
   ofrece como herramienta, y de lo que cada quien descargue responde quien lo
   hace.
+- **En Windows N o KN, el editor de recorte no reproduce sonido.** A esas
+  ediciones les falta el Media Feature Pack, del que depende el componente
+  multimedia de Qt. Lexa muestra igualmente la imagen del vídeo y el recorte
+  funciona; instalando el Media Feature Pack de Microsoft se recupera el sonido.
 - **Una grabación con poca voz detectable tarda varias veces más.** El filtro de
   silencios (Silero VAD) da por silencio la voz lejana y reverberada de una
   sala: en una grabación de aula llegó a descartar el 94 % del audio. Cuando

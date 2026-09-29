@@ -31,6 +31,18 @@ from ui.widgets import Panel, hdivider
 
 _SPEEDS = [0.5, 0.75, 1.0, 1.5, 2.0]
 
+# Alto minimo de la vista previa. Es el minimo de verdad, no el comodo: al
+# declarar 220 el editor entero pedia 534 px y en un portatil de pantalla baja
+# no cabia, asi que se salia por abajo y la lista de tramos quedaba cortada con
+# barra de desplazamiento. Con el minimo real, encoge y cabe; cuando hay sitio,
+# el factor de estiramiento le devuelve todo el espacio y se ve mas grande que
+# antes.
+_PREVIEW_ALTO_MIN = 104
+
+# Por debajo de este alto se aprietan margenes y separaciones. No corta nada:
+# solo gana unos pixeles para que la lista de tramos se vea sin desplazar.
+_ALTO_COMODO = 560
+
 
 class _AudioLoader(QThread):
     """Decodifica el audio fuera del hilo de la interfaz.
@@ -84,7 +96,9 @@ class _PlayButton(QPushButton):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(T.ACCENT))
+        # Apagado se pinta en gris: si no, un boton que no hace nada sigue
+        # llamando con el verde de siempre.
+        p.setBrush(QColor(T.ACCENT if self.isEnabled() else T.DIM))
         cx, cy = self.width() / 2, self.height() / 2
 
         if self._playing:
@@ -107,6 +121,7 @@ class TrimPanel(QWidget):
 
     applied = pyqtSignal(int, object)    # file_id, tramos
     cancelled = pyqtSignal()
+    notice = pyqtSignal(str, str)        # nivel, mensaje para el registro
 
     def __init__(self, item: FileItem, parent=None):
         super().__init__(parent)
@@ -134,13 +149,17 @@ class TrimPanel(QWidget):
 
         tarjeta = Panel(padded=False)
         fuera.addWidget(tarjeta)
+        self._tarjeta = tarjeta
+        self._compacto = False
 
         raiz = tarjeta.layout()
         raiz.setContentsMargins(16, 14, 16, 12)
         raiz.setSpacing(10)
 
         raiz.addWidget(self._build_header())
-        raiz.addWidget(self._build_preview(), stretch=3)
+        self._preview = self._build_preview()
+        raiz.addWidget(self._preview, stretch=3)
+        raiz.addWidget(self._build_aviso())
 
         self._wave = Waveform()
         self._wave.setStyleSheet(f"border: 1px solid {T.LINE};"
@@ -222,6 +241,32 @@ class TrimPanel(QWidget):
         """El nombre se recorta al ancho que sobra, no empuja al reloj fuera."""
         super().resizeEvent(e)
         self._fit_chip()
+        self._ajustar_alto()
+
+    def _ajustar_alto(self) -> None:
+        """En pantallas bajas se aprietan margenes y separaciones.
+
+        El reparto del alto lo hace el propio layout: la vista previa declara
+        su minimo de verdad y se estira cuando hay sitio. Esto solo recupera
+        los pixeles de los margenes, que en una pantalla corta son justo los
+        que hacen que la lista de tramos se vea sin tener que desplazarla.
+        """
+        if getattr(self, "_preview", None) is None:
+            return
+        self._compactar(self.height() < _ALTO_COMODO)
+
+    def _compactar(self, si: bool) -> None:
+        if self._compacto == si:
+            return
+        self._compacto = si
+        raiz = self._tarjeta.layout()
+        raiz.setSpacing(6 if si else 10)
+        if si:
+            raiz.setContentsMargins(12, 10, 12, 8)
+        else:
+            raiz.setContentsMargins(16, 14, 16, 12)
+        if hasattr(self, "_hint"):
+            self._hint.setMinimumHeight(48 if si else 74)
 
     def _fit_chip(self) -> None:
         chip = getattr(self, "_chip", None)
@@ -233,7 +278,7 @@ class TrimPanel(QWidget):
 
     def _build_preview(self) -> QWidget:
         caja = QWidget()
-        caja.setMinimumHeight(220)
+        caja.setMinimumHeight(_PREVIEW_ALTO_MIN)
         caja.setStyleSheet(
             f"background: #000000; border: 1px solid {T.LINE};"
             f" border-radius: {T.R_MD}px;")
@@ -259,6 +304,23 @@ class TrimPanel(QWidget):
         self._fallback.setVisible(False)
         lay.addWidget(self._fallback)
         return caja
+
+    def _build_aviso(self) -> QWidget:
+        """Franja para explicar por que no hay sonido o no hay imagen.
+
+        Va fuera del recuadro negro a proposito: un QLabel no puede tener a la
+        vez texto y fotograma, asi que si el aviso viviera dentro, en cuanto se
+        pintara el primer fotograma desapareceria y la persona se quedaria sin
+        saber que pasa.
+        """
+        self._aviso = QLabel("")
+        self._aviso.setWordWrap(True)
+        self._aviso.setStyleSheet(
+            f"background: {T.WARN_SOFT}; border: 1px solid {T.LINE};"
+            f" border-radius: {T.R_SM}px; color: {T.WARN};"
+            f" font-size: 11.5px; padding: 6px 10px;")
+        self._aviso.setVisible(False)
+        return self._aviso
 
     def _build_controls(self) -> QWidget:
         fila = QWidget()
@@ -309,7 +371,7 @@ class TrimPanel(QWidget):
             "Arrastra los bordes para ajustarla, o por dentro para moverla.")
         self._hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._hint.setWordWrap(True)
-        self._hint.setMinimumHeight(74)
+        self._hint.setMinimumHeight(74)   # se baja a 48 en pantallas cortas
         self._hint.setStyleSheet(
             f"background: {T.PANEL2}; border: 1px dashed {T.LINE};"
             f" border-radius: {T.R_MD}px; color: {T.DIM}; font-size: 12px;"
@@ -365,8 +427,14 @@ class TrimPanel(QWidget):
     def _start_player(self) -> None:
         try:
             from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
-        except Exception:
-            self._show_fallback("Reproducción no disponible en este equipo.")
+        except Exception as e:
+            # Pasa en las ediciones N y KN de Windows sin el Media Feature
+            # Pack: Qt6Multimedia.dll depende de AVRT.dll, que ahi no existe,
+            # y entonces ni siquiera se puede importar.
+            self.notice.emit(
+                "warn", f"Este equipo no tiene el componente multimedia de "
+                        f"Windows ({e}). El recorte funciona igual, sin sonido.")
+            self._sin_reproductor()
             return
 
         self._player = QMediaPlayer(self)
@@ -385,6 +453,26 @@ class TrimPanel(QWidget):
         self._watch.setInterval(80)
         self._watch.timeout.connect(self._watch_selection)
 
+    def _sin_reproductor(self) -> None:
+        """Sin sonido, pero con imagen: se sacan los fotogramas con PyAV.
+
+        Antes solo se ponia el aviso y se dejaba el recuadro en negro; como el
+        cargador de fotogramas no llegaba a abrirse, moverse por el video
+        tampoco ensenaba nada.
+        """
+        if self._video is not None:
+            self._video.setVisible(False)
+        self._show_fallback(
+            "Este equipo no puede reproducir el sonido: le falta el componente "
+            "multimedia de Windows.\n"
+            "Se ve la imagen del vídeo y el recorte funciona igual.")
+        self._load_frames()
+        self._frame_at(0.0)
+        # Los botones que dependen del reproductor no pueden hacer nada.
+        for boton in (self._play_btn, self._sel_btn):
+            boton.setEnabled(False)
+            boton.setToolTip("Necesita el componente multimedia de Windows")
+
     def _on_media_error(self) -> None:
         """El formato no lo abre Windows: se pasa a fotogramas con PyAV."""
         if self._video is not None:
@@ -395,6 +483,17 @@ class TrimPanel(QWidget):
         self._load_frames()
 
     def _show_fallback(self, texto: str) -> None:
+        # Pueden coincidir dos problemas —ni reproductor ni pista de audio— y
+        # antes el segundo aviso borraba al primero, dejando media explicacion.
+        corto = " ".join(texto.split())
+        if not hasattr(self, "_avisos"):
+            self._avisos = []
+        if corto not in self._avisos:
+            self._avisos.append(corto)
+        self._aviso.setText("  ·  ".join(self._avisos))
+        self._aviso.setVisible(True)
+        # Tambien dentro del recuadro, para que no se quede negro mientras no
+        # haya ningun fotograma que pintar.
         self._fallback.setText(texto)
         self._fallback.setVisible(True)
 
