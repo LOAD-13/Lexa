@@ -230,6 +230,12 @@ devuelve todos los ajustes a sus valores por defecto.
   memoria una sola vez; a partir del segundo archivo va a velocidad normal.
 - **Activar «Identificar hablantes» añade un 30-40 % al tiempo de proceso.**
   Por eso viene desactivado.
+- **En las ediciones N y KN de Windows no hay sonido en el editor de recorte.**
+  Son las versiones que se venden sin reproductor multimedia, y les falta el
+  componente del que depende Qt para reproducir. Lexa lo detecta y sigue
+  funcionando: se ve la imagen del vídeo, la forma de onda y el recorte entero,
+  solo que sin sonido. Instalando el «Media Feature Pack» de Microsoft vuelve.
+
 - **Los enlaces de YouTube pueden dejar de funcionar sin aviso.** YouTube cambia
   cómo sirve los vídeos cada pocas semanas; cuando pasa, hace falta actualizar
   `yt-dlp`. Descargar vídeos va además contra sus condiciones de uso: Lexa lo
