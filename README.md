@@ -7,7 +7,7 @@
 **Convierte audio, video, imágenes y PDFs en texto. Todo en tu computadora.**
 
 <p>
-<img alt="Versión" src="https://img.shields.io/badge/versión-1.3.3-6ec99a?style=flat-square&labelColor=1c1f24">
+<img alt="Versión" src="https://img.shields.io/badge/versión-2.0.0-6ec99a?style=flat-square&labelColor=1c1f24">
 <img alt="Plataforma" src="https://img.shields.io/badge/PLATAFORMA-WINDOWS-0078d4?style=flat-square&labelColor=1c1f24">
 <img alt="Python" src="https://img.shields.io/badge/Python-3.10+-3776ab?style=flat-square&labelColor=1c1f24">
 <img alt="PyQt6" src="https://img.shields.io/badge/PyQt6-6.6-41cd52?style=flat-square&labelColor=1c1f24">
@@ -37,8 +37,17 @@ Sin cuentas, sin API keys, sin subir nada a internet.
 | **Video** — mp4, mkv, avi, mov, webm | Lo mismo, extrayendo la pista de audio |
 | **Imágenes** — jpg, png, webp, tiff | Texto reconocido con OCR, respetando el orden de lectura |
 | **PDF** — nativos y escaneados | Texto embebido cuando existe; OCR página a página cuando la letra es una imagen |
+| **YouTube** — pegando el enlace | Descarga el vídeo y lo transcribe como cualquier otro archivo |
 
 Además:
+
+- **Elige qué parte transcribir** — un editor con la forma de onda y el vídeo,
+  dentro de la misma ventana. Arrastra sobre la onda para marcar un tramo,
+  ajusta sus bordes, marca varios del mismo archivo. Los tiempos del resultado
+  siguen siendo los del original.
+- **Cola de trabajo** — suelta todos los archivos que quieras y se procesan uno
+  tras otro. Los que añadas mientras ya está trabajando se recogen al terminar
+  con el actual.
 
 - **Diccionario de términos** — escribe los nombres y palabras que el modelo suele
   escribir mal (apellidos, marcas, jerga) y los acierta.
@@ -68,7 +77,9 @@ flowchart TD
     FO["core/formatter.py"]
     EX["core/exporter.py"]
     UP["core/updater.py<br/>GitHub Releases"]
+    YT["core/youtube.py<br/>yt-dlp + QuickJS"]
 
+    YT -->|"mp4 descargado"| UI
     UI -->|"FileItem[] + AppConfig"| W
     W <-->|"acierto: 0.1 s"| CA
     W -->|"audio y video"| ME
@@ -103,7 +114,7 @@ instalar nada.
 Verifica la descarga contra el `SHA256SUMS.txt` de la Release:
 
 ```powershell
-Get-FileHash .\Lexa-1.3.3-windows-x64.zip -Algorithm SHA256
+Get-FileHash .\Lexa-2.0.0-windows-x64.zip -Algorithm SHA256
 ```
 
 A partir de la 1.3.3, Lexa comprueba al arrancar si hay versión nueva y la
@@ -181,7 +192,7 @@ no depende de cuál sea el `python` del PATH. Al terminar deja en `dist/`:
 | Archivo | Para qué |
 |---|---|
 | `Lexa/` | La carpeta ejecutable |
-| `Lexa-1.3.3-windows-x64.zip` | Paquete de distribución e instalación limpia |
+| `Lexa-2.0.0-windows-x64.zip` | Paquete de distribución e instalación limpia |
 | `SHA256SUMS.txt` | Hashes que verifica el actualizador |
 
 Se construye en modo **onedir** a propósito: con `onefile`, Windows descomprime
@@ -205,6 +216,7 @@ El zip completo solo hace falta cuando cambian las librerías.
 | Modelos de IA | `%LOCALAPPDATA%\Lexa\models` |
 | Caché de transcripciones | `%LOCALAPPDATA%\Lexa\cache` (tope 200 MB, se poda sola) |
 | Actualizaciones descargadas | `%LOCALAPPDATA%\Lexa\updates` |
+| Vídeos bajados de YouTube | `%LOCALAPPDATA%\Lexa\youtube` (se vacía desde los ajustes) |
 | Configuración | `%APPDATA%\Lexa\config.json` |
 | Log de errores de arranque | `%APPDATA%\Lexa\error.log` |
 | Resultados | Junto al archivo original, o la carpeta que elijas |
@@ -218,6 +230,11 @@ devuelve todos los ajustes a sus valores por defecto.
   memoria una sola vez; a partir del segundo archivo va a velocidad normal.
 - **Activar «Identificar hablantes» añade un 30-40 % al tiempo de proceso.**
   Por eso viene desactivado.
+- **Los enlaces de YouTube pueden dejar de funcionar sin aviso.** YouTube cambia
+  cómo sirve los vídeos cada pocas semanas; cuando pasa, hace falta actualizar
+  `yt-dlp`. Descargar vídeos va además contra sus condiciones de uso: Lexa lo
+  ofrece como herramienta, y de lo que cada quien descargue responde quien lo
+  hace.
 - **Una grabación con poca voz detectable tarda varias veces más.** El filtro de
   silencios (Silero VAD) da por silencio la voz lejana y reverberada de una
   sala: en una grabación de aula llegó a descartar el 94 % del audio. Cuando
