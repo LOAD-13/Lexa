@@ -169,6 +169,14 @@ class CenterPanel(QWidget):
     def hide_trimmer(self) -> None:
         if getattr(self, "_trimmer", None) is None:
             return
+        # Soltar el reproductor antes de tirar el panel. deleteLater() no basta:
+        # el objeto de C++ vive hasta que el bucle de eventos lo recoge, y
+        # mientras tanto Windows considera el archivo abierto. Se notaba al
+        # querer borrar un video de YouTube ya recortado: no se dejaba.
+        try:
+            self._trimmer.release()
+        except Exception:
+            pass
         self.layout().removeWidget(self._trimmer)
         self._trimmer.setParent(None)
         self._trimmer.deleteLater()

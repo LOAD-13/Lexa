@@ -57,3 +57,21 @@ def config_file() -> str:
 
 def default_output_dir() -> str:
     return os.path.join(os.path.expanduser("~"), "Documents", "Lexa")
+
+
+def youtube_dir() -> str:
+    """Carpeta donde caen los videos bajados de YouTube.
+
+    Van con los modelos y no en los temporales del sistema: son archivos
+    grandes que conviene poder encontrar y borrar a mano.
+    """
+    d = os.path.join(data_dir(), "youtube")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def bin_dir() -> str:
+    """Carpeta de binarios auxiliares bajados en el equipo del usuario."""
+    d = os.path.join(data_dir(), "bin")
+    os.makedirs(d, exist_ok=True)
+    return d

@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QWidget, QFrame,
 )
 
+from core import youtube
 from core.models import (
     FileItem, FileKind, FileStatus, classify_file, expand_paths, file_dialog_filter,
 )
@@ -21,6 +22,7 @@ from ui.widgets import Panel, SectionLabel, make_btn
 
 class LeftPanel(QWidget):
     files_added   = pyqtSignal(list)   # list[str]
+    link_pasted   = pyqtSignal(str)    # enlace de YouTube
     file_selected = pyqtSignal(int)
     file_removed  = pyqtSignal(int)
     file_retried  = pyqtSignal(int)
@@ -43,6 +45,7 @@ class LeftPanel(QWidget):
 
         self.dropzone = Dropzone()
         self.dropzone.files_dropped.connect(self.files_added)
+        self.dropzone.link_dropped.connect(self.link_pasted)
         input_panel.layout().addWidget(self.dropzone)
         root.addWidget(input_panel)
 
@@ -143,6 +146,7 @@ class LeftPanel(QWidget):
 # ─────────────────────────────────────────────────────────────────────────────
 class Dropzone(QWidget):
     files_dropped = pyqtSignal(list)
+    link_dropped = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -183,10 +187,21 @@ class Dropzone(QWidget):
         )
         lay.addWidget(hint)
 
+        botones = QHBoxLayout()
+        botones.setSpacing(6)
+        botones.addStretch()
         self._btn = make_btn("Elegir archivos", kind="ghost_sm")
         self._btn.setFixedHeight(28)
         self._btn.clicked.connect(self._open_dialog)
-        lay.addWidget(self._btn, alignment=Qt.AlignmentFlag.AlignCenter)
+        botones.addWidget(self._btn)
+
+        self._link_btn = make_btn("Pegar enlace", kind="ghost_sm")
+        self._link_btn.setFixedHeight(28)
+        self._link_btn.setToolTip("Descargar un vídeo de YouTube y transcribirlo")
+        self._link_btn.clicked.connect(lambda: self.link_dropped.emit(""))
+        botones.addWidget(self._link_btn)
+        botones.addStretch()
+        lay.addLayout(botones)
 
         self._update_style()
 
@@ -210,13 +225,13 @@ class Dropzone(QWidget):
 
     # ── Arrastrar y soltar ───────────────────────────────────────────────────
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
-        if event.mimeData().hasUrls():
+        if event.mimeData().hasUrls() or event.mimeData().hasText():
             self._hovering = True
             self._update_style()
             event.acceptProposedAction()
 
     def dragMoveEvent(self, event) -> None:
-        if event.mimeData().hasUrls():
+        if event.mimeData().hasUrls() or event.mimeData().hasText():
             event.acceptProposedAction()
 
     def dragLeaveEvent(self, _) -> None:
@@ -226,11 +241,22 @@ class Dropzone(QWidget):
     def dropEvent(self, event: QDropEvent) -> None:
         self._hovering = False
         self._update_style()
-        paths = [u.toLocalFile() for u in event.mimeData().urls() if u.isLocalFile()]
+        urls = event.mimeData().urls()
+        paths = [u.toLocalFile() for u in urls if u.isLocalFile()]
         # Soltar una carpeta agrega todo lo soportado que tenga dentro.
         paths = expand_paths(paths)
         if paths:
             self.files_dropped.emit(paths)
+        else:
+            # Arrastrar desde el navegador no trae un archivo local sino una
+            # direccion; antes se descartaba en silencio.
+            sueltos = [u.toString() for u in urls if not u.isLocalFile()]
+            if event.mimeData().hasText():
+                sueltos.append(event.mimeData().text())
+            for texto in sueltos:
+                if youtube.is_link(texto):
+                    self.link_dropped.emit(texto.strip())
+                    break
         event.acceptProposedAction()
 
 

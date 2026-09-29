@@ -107,3 +107,7 @@ $RECYCLE.BIN/
 # Documentos de prueba (el icono y las fuentes sí se versionan)
 *.pdf
 *.docx
+
+# Motor de JavaScript que build_exe.py baja para YouTube: es un binario de
+# terceros con huella fijada, se vuelve a bajar solo.
+bin/

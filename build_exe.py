@@ -36,11 +36,13 @@ HIDDEN_IMPORTS = [
     "PIL.Image",
     "PIL.ImageOps",
     "yaml",
+    "yt_dlp",
 ]
 
 # Paquetes con datos que hay que copiar enteros (modelos ONNX incluidos,
 # archivos de configuracion, tokenizadores).
 COLLECT_ALL = [
+    "yt_dlp",
     "rapidocr_onnxruntime",
     "sherpa_onnx",
     "faster_whisper",
@@ -116,6 +118,47 @@ def ensure_not_running() -> None:
         )
 
 
+
+def ensure_js_runtime() -> str:
+    """Baja el motor de JavaScript que necesita YouTube y devuelve su ruta.
+
+    YouTube firma las URL de los formatos con JavaScript: sin un motor que lo
+    ejecute, descargar un video devuelve 403. Se usa QuickJS —2 MB— en vez del
+    Deno que trae yt-dlp de serie, que son 43 MB.
+
+    No vive en el repositorio: se baja de su publicacion fijada y se comprueba
+    la huella antes de empaquetarlo, igual que hace el actualizador.
+    """
+    sys.path.insert(0, ROOT)
+    from core import youtube
+
+    destino = os.path.join(ROOT, "bin", youtube.QJS_NAME)
+    if os.path.isfile(destino):
+        print(f"[build] motor de JavaScript ya presente: {destino}")
+        return destino
+
+    os.makedirs(os.path.dirname(destino), exist_ok=True)
+    print("[build] bajando el motor de JavaScript para YouTube (2 MB)…")
+    try:
+        import hashlib
+        import urllib.request
+        req = urllib.request.Request(youtube._QJS_URL, headers={"User-Agent": "Lexa"})
+        with urllib.request.urlopen(req, timeout=120) as r:
+            datos = r.read()
+        huella = hashlib.sha256(datos).hexdigest()
+        if huella != youtube._QJS_SHA256:
+            raise RuntimeError(f"huella distinta de la esperada: {huella}")
+        with open(destino, "wb") as f:
+            f.write(datos)
+        print(f"[build] motor listo: {len(datos) / 1e6:.1f} MB")
+        return destino
+    except Exception as e:
+        # Sin motor, Lexa sigue funcionando: baja solo el audio de YouTube.
+        print(f"[build] AVISO: no se pudo bajar el motor de JavaScript ({e}).")
+        print("[build] Lexa solo podra bajar el audio de los videos de YouTube.")
+        return ""
+
+
 def main() -> int:
     try:
         import PyInstaller  # noqa: F401
@@ -126,6 +169,7 @@ def main() -> int:
         )
 
     icon = ensure_icon()
+    motor = ensure_js_runtime()
     ensure_not_running()
 
     for folder in (DIST, BUILD):
@@ -146,6 +190,8 @@ def main() -> int:
         "--add-data", f"{os.path.join(ROOT, 'icon.ico')}{separator}.",
         "--add-data", f"{os.path.join(ROOT, 'fonts')}{separator}fonts",
     ]
+    if motor:
+        command += ["--add-data", f"{motor}{separator}bin"]
     for module in HIDDEN_IMPORTS:
         command += ["--hidden-import", module]
     # «paquete» y no «package»: el nombre de la funcion que empaqueta al final

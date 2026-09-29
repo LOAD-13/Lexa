@@ -653,6 +653,17 @@ class TrimPanel(QWidget):
             except Exception:
                 pass
             self._frames = None
+        # El hilo que decodifica la onda tiene el archivo abierto. Si se deja
+        # corriendo, sigue leyendo un archivo que ya nadie mira y Windows no
+        # deja borrarlo ni moverlo mientras Lexa siga viva.
+        if self._loader is not None:
+            try:
+                if self._loader.isRunning():
+                    self._loader.requestInterruption()
+                    self._loader.wait(5000)
+            except Exception:
+                pass
+            self._loader = None
 
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_Space:

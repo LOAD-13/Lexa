@@ -38,6 +38,7 @@ class RightPanel(QWidget):
     export_requested = pyqtSignal()
     clear_requested  = pyqtSignal()
     open_folder_requested = pyqtSignal()
+    youtube_cleared  = pyqtSignal(int)      # bytes liberados
 
     def __init__(self, config: AppConfig, parent=None):
         super().__init__(parent)
@@ -216,8 +217,43 @@ class RightPanel(QWidget):
         row = SettingRow("Guardar automáticamente",
                          "Al terminar de procesar", self._auto_toggle)
         panel.layout().addWidget(row)
+        panel.layout().addWidget(row.separator())
+
+        # YouTube: la imagen solo sirve para orientarse al recortar, y cuesta
+        # unas cuatro veces mas de descarga. Por eso se puede apagar.
+        self._yt_toggle = ToggleSwitch(cfg.youtube_video)
+        self._yt_toggle.toggled.connect(self._on_yt_toggle)
+        row = SettingRow("Descargar también el vídeo de YouTube",
+                         "Apagado baja solo el audio: pesa mucho menos",
+                         self._yt_toggle)
+        panel.layout().addWidget(row)
+        panel.layout().addWidget(row.separator())
+
+        yt_btn = make_btn("Vaciar", kind="subtle")
+        yt_btn.setFixedHeight(25)
+        yt_btn.clicked.connect(self._clear_youtube)
+        self._yt_row = SettingRow("Descargas de YouTube",
+                                  self._youtube_label(), yt_btn)
+        panel.layout().addWidget(self._yt_row)
 
         return panel
+
+    def _youtube_label(self) -> str:
+        from core import youtube
+        ocupado = youtube.cache_size()
+        if ocupado <= 0:
+            return "No hay nada descargado"
+        return f"{ocupado / 1e6:.0f} MB guardados"
+
+    def _on_yt_toggle(self, valor: bool) -> None:
+        self._config.youtube_video = valor
+        self.config_changed.emit(self._config)
+
+    def _clear_youtube(self) -> None:
+        from core import youtube
+        liberado = youtube.clear_cache()
+        self._yt_row.set_sub(self._youtube_label())
+        self.youtube_cleared.emit(liberado)
 
     # ── Acciones ─────────────────────────────────────────────────────────────
     def _build_actions(self) -> QWidget:

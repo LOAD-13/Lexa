@@ -59,6 +59,9 @@ class FileItem:
     # Tramos (inicio, fin) en segundos que se transcribiran. Vacio = todo el
     # archivo, que es el comportamiento de siempre.
     ranges: List[tuple] = field(default_factory=list)
+    # Enlace del que salio el archivo, si vino de YouTube. Sirve para no
+    # descargar dos veces el mismo video.
+    source_url: Optional[str] = None
 
     @property
     def name(self) -> str:
@@ -162,6 +165,10 @@ class AppConfig:
     # carpeta comun. Elegir carpeta a mano desactiva este modo.
     save_next_to_source: bool = True
     save_location: str = field(default_factory=default_output_dir)
+
+    # YouTube: bajar tambien la imagen sirve para orientarse al recortar, pero
+    # multiplica por cuatro lo que ocupa la descarga.
+    youtube_video: bool = True
 
     # Estado de la interfaz (persistido, no editable desde los ajustes)
     tour_completed: bool = False

@@ -30,6 +30,8 @@ from ui.footer import Footer
 from ui.tour import TourOverlay, build_steps
 from ui.update_banner import UpdateBanner, UpdateCheckThread, UpdateDownloadThread
 from ui.update_dialog import UpdateDialog
+from ui.youtube_dialog import YoutubeDialog
+from ui.youtube_thread import YoutubeDownloadThread
 
 
 class MainWindow(QMainWindow):
@@ -45,6 +47,8 @@ class MainWindow(QMainWindow):
         self._update_thread: Optional[UpdateCheckThread] = None
         self._download_thread: Optional[UpdateDownloadThread] = None
         self._pending_update = None
+        self._yt_thread: Optional[YoutubeDownloadThread] = None
+        self._yt_last_pct = -1
 
         self.setWindowTitle("Lexa")
         # Mínimo holgado: por debajo de esto los paneles dejan de ser legibles,
@@ -114,6 +118,9 @@ class MainWindow(QMainWindow):
         self._v_splitter.setSizes([640, 150])
         root.addWidget(self._v_splitter, stretch=1)
 
+        self._yt_dialog = YoutubeDialog(root_widget)
+        self._yt_dialog.accepted.connect(self._on_link_accepted)
+
         self._update_dialog = UpdateDialog(root_widget)
         self._update_dialog.accepted.connect(self._start_download)
         self._update_dialog.restart.connect(self._restart)
@@ -129,6 +136,7 @@ class MainWindow(QMainWindow):
         self._left.file_retried.connect(self._on_file_retried)
         self._left.file_trimmed.connect(self._on_file_trimmed)
         self._left.clear_all.connect(self._on_clear_all)
+        self._left.link_pasted.connect(self._on_link_pasted)
 
         self._center.copied.connect(lambda msg: self._log("info", msg))
 
@@ -137,6 +145,7 @@ class MainWindow(QMainWindow):
         self._right.export_requested.connect(lambda: self._export(manual=True))
         self._right.clear_requested.connect(self._on_clear_all)
         self._right.open_folder_requested.connect(self._open_output_folder)
+        self._right.youtube_cleared.connect(self._on_youtube_cleared)
 
     # ── Barra de título oscura (Windows 10 1809+ / Windows 11) ───────────────
     def showEvent(self, event) -> None:
@@ -181,6 +190,8 @@ class MainWindow(QMainWindow):
             self._tour.setGeometry(self.centralWidget().rect())
         if self._update_dialog.isVisible():
             self._update_dialog.setGeometry(self.centralWidget().rect())
+        if self._yt_dialog.isVisible():
+            self._yt_dialog.setGeometry(self.centralWidget().rect())
 
     # -- Actualizaciones ------------------------------------------------------
     def check_for_updates(self) -> None:
@@ -311,6 +322,67 @@ class MainWindow(QMainWindow):
                                   f"se procesarán al terminar el actual")
             else:
                 self._log("info", f"{added} archivo(s) añadido(s) a la cola")
+
+    # -- YouTube --------------------------------------------------------------
+    def _on_link_pasted(self, texto: str) -> None:
+        """Abre el cuadro del enlace. El texto llega ya puesto si se arrastro."""
+        self._yt_dialog.open(texto)
+
+    def _on_link_accepted(self, enlace: str) -> None:
+        if any(getattr(f, "source_url", None) == enlace for f in self._files):
+            self._log("warn", "Ese video ya esta en la cola")
+            return
+        con_video = bool(self._config.youtube_video)
+        if self._yt_thread is not None and self._yt_thread.isRunning():
+            if self._yt_thread.add(enlace):
+                self._log("info", "Enlace anadido a la cola de descargas")
+                return
+            # El hilo ya habia decidido que no le quedaba trabajo: se arranca otro.
+        self._yt_thread = YoutubeDownloadThread([enlace], con_video, self)
+        self._yt_thread.progress.connect(self._on_yt_progress)
+        self._yt_thread.finished_one.connect(self._on_yt_done)
+        self._yt_thread.failed_one.connect(self._on_yt_failed)
+        self._yt_thread.notice.connect(self._log)
+        self._yt_thread.start()
+        self._log("info", "Descargando de YouTube"
+                          + ("" if con_video else " (solo el audio)"))
+
+    def _on_yt_progress(self, _enlace: str, fraccion: float, texto: str) -> None:
+        pct = int(fraccion * 100)
+        # El registro se llenaria de lineas identicas: solo se anota cada 10 %.
+        if pct // 10 == getattr(self, "_yt_last_pct", -1) // 10:
+            return
+        self._yt_last_pct = pct
+        self._log("info", f"{texto}... {pct}%")
+
+    def _on_yt_done(self, enlace: str, ruta: str) -> None:
+        self._yt_last_pct = -1
+        antes = {f.path for f in self._files}
+        self._on_files_added([ruta])
+        nuevo = next((f for f in self._files if f.path not in antes), None)
+        if nuevo is not None:
+            # Se guarda el enlace para no volver a bajar el mismo video.
+            nuevo.source_url = enlace
+        else:
+            self._log("warn", "El video se descargo pero no se pudo anadir a la cola")
+
+    def _on_youtube_cleared(self, bytes_liberados: int) -> None:
+        from core import youtube
+        restante = youtube.cache_size()
+        if bytes_liberados > 0:
+            self._log("info", f"Descargas de YouTube borradas: "
+                              f"{bytes_liberados / 1e6:.0f} MB liberados")
+        elif restante <= 0:
+            self._log("info", "No había descargas de YouTube que borrar")
+        if restante > 0:
+            # Windows no deja borrar lo que esta abierto. Decirlo evita que
+            # parezca que el boton no hace nada.
+            self._log("warn", f"Quedan {restante / 1e6:.0f} MB en uso por "
+                              f"archivos de la cola. Quítalos y vuelve a vaciar.")
+
+    def _on_yt_failed(self, _enlace: str, motivo: str) -> None:
+        self._yt_last_pct = -1
+        self._log("error", f"YouTube: {motivo}")
 
     def _on_file_removed(self, file_id: int) -> None:
         self._files = [f for f in self._files if f.id != file_id]
@@ -647,6 +719,10 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
             self._stop_worker()
+        # Una descarga a medias no puede quedarse viva detras de la ventana.
+        if self._yt_thread is not None and self._yt_thread.isRunning():
+            self._yt_thread.abort()
+            self._yt_thread.wait(3000)
         self._save_layout()
         super().closeEvent(event)
 
