@@ -16,7 +16,9 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 from PyQt6.QtCore import Qt, QRectF, QThread, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QColor, QImage, QPainter, QPainterPath, QPixmap
+from PyQt6.QtGui import (
+    QColor, QFontMetrics, QImage, QPainter, QPainterPath, QPixmap,
+)
 from PyQt6.QtWidgets import (
     QHBoxLayout, QLabel, QPushButton, QScrollArea,
     QVBoxLayout, QWidget,
@@ -25,7 +27,7 @@ from PyQt6.QtWidgets import (
 from core.models import FileItem
 from ui import theme as T
 from ui.waveform import Waveform, _reloj
-from ui.widgets import Panel
+from ui.widgets import Panel, hdivider
 
 _SPEEDS = [0.5, 0.75, 1.0, 1.5, 2.0]
 
@@ -151,6 +153,7 @@ class TrimPanel(QWidget):
         raiz.addWidget(self._build_list(), stretch=2)
         raiz.addWidget(self._build_footer())
 
+        self._fit_chip()
         self._wave.set_ranges(item.ranges)
         self._start_player()
         self._load_audio()
@@ -158,23 +161,75 @@ class TrimPanel(QWidget):
 
     # -- Construccion ---------------------------------------------------------
     def _build_header(self) -> QWidget:
+        """Titulo al mismo peso que el de la vista previa a la que sustituye.
+
+        El nombre del archivo solo, flotando arriba a la izquierda, no decia
+        que era esa pantalla. Ahora manda el titulo y el archivo va en una
+        chapa, junto al tipo y la duracion; el reloj vive en su propia pildora.
+        """
+        caja = QWidget()
+        col = QVBoxLayout(caja)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(10)
+
         fila = QWidget()
         lay = QHBoxLayout(fila)
         lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(10)
 
-        nombre = QLabel(self._item.name)
-        nombre.setStyleSheet(
-            f"background: transparent; color: {T.FG}; font-size: 13px; font-weight: 600;")
-        lay.addWidget(nombre)
+        titulo = QLabel("Recortar")
+        titulo.setStyleSheet(
+            f"background: transparent; font-size: 21px; font-weight: 700;"
+            f" color: {T.FG}; letter-spacing: -0.3px;")
+        lay.addWidget(titulo)
+
+        self._chip = QLabel()
+        self._chip.setStyleSheet(
+            f"background: {T.PANEL2}; border: 1px solid {T.LINE};"
+            f" border-radius: {T.R_SM}px; color: {T.FG2}; font-size: 11.5px;"
+            f" padding: 3px 9px;")
+        self._chip.setToolTip(self._item.name)
+        lay.addWidget(self._chip)
+
+        detalle = QLabel(self._detalle())
+        detalle.setStyleSheet(
+            f"background: transparent; color: {T.MUTED}; font-size: 12px;")
+        lay.addWidget(detalle)
         lay.addStretch()
 
         self._clock = QLabel("00:00 / 00:00")
         self._clock.setStyleSheet(
-            f"background: transparent; color: {T.MUTED}; font-size: 11.5px; "
-            f"font-family: Consolas, monospace;")
+            f"background: {T.PANEL2}; border: 1px solid {T.LINE};"
+            f" border-radius: {T.R_SM}px; color: {T.FG2}; font-size: 11.5px;"
+            f" padding: 3px 9px; font-family: Consolas, monospace;")
         lay.addWidget(self._clock)
 
-        return fila
+        col.addWidget(fila)
+        col.addWidget(hdivider())
+        return caja
+
+    def _detalle(self) -> str:
+        """Tipo y duracion, lo unico del archivo que importa aqui."""
+        partes = []
+        ext = os.path.splitext(self._item.name)[1].lstrip(".").upper()
+        if ext:
+            partes.append(ext)
+        if self._duration > 0:
+            partes.append(_reloj(self._duration))
+        return " · ".join(partes)
+
+    def resizeEvent(self, e):
+        """El nombre se recorta al ancho que sobra, no empuja al reloj fuera."""
+        super().resizeEvent(e)
+        self._fit_chip()
+
+    def _fit_chip(self) -> None:
+        chip = getattr(self, "_chip", None)
+        if chip is None:
+            return
+        tope = max(120, int(self.width() * 0.34))
+        fm = QFontMetrics(chip.font())
+        chip.setText(fm.elidedText(self._item.name, Qt.TextElideMode.ElideMiddle, tope))
 
     def _build_preview(self) -> QWidget:
         caja = QWidget()
