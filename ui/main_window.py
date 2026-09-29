@@ -370,17 +370,26 @@ class MainWindow(QMainWindow):
         self._yt_thread.finished_one.connect(self._on_yt_done)
         self._yt_thread.failed_one.connect(self._on_yt_failed)
         self._yt_thread.notice.connect(self._log)
+        self._yt_thread.all_done.connect(self._on_yt_all_done)
         self._yt_thread.start()
+        self._footer.set_download(0.0, "Preparando la descarga")
         self._log("info", "Descargando de YouTube"
                           + ("" if con_video else " (solo el audio)"))
 
     def _on_yt_progress(self, _enlace: str, fraccion: float, texto: str) -> None:
         pct = int(fraccion * 100)
-        # El registro se llenaria de lineas identicas: solo se anota cada 10 %.
+        # La barra se mueve siempre: es lo que dice que Lexa sigue viva.
+        self._footer.set_download(fraccion, f"{texto}… {pct}%")
+        # El registro, en cambio, se llenaria de lineas identicas: cada 10 %.
         if pct // 10 == getattr(self, "_yt_last_pct", -1) // 10:
             return
         self._yt_last_pct = pct
         self._log("info", f"{texto}... {pct}%")
+
+    def _on_yt_all_done(self) -> None:
+        """No quedan descargas: la barra vuelve a ser de la transcripcion."""
+        self._footer.clear_download()
+        self._sync_views()
 
     def _on_yt_done(self, enlace: str, ruta: str) -> None:
         self._yt_last_pct = -1

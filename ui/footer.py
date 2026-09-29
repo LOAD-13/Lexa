@@ -58,6 +58,11 @@ class Footer(QWidget):
         self._audio_total = 0.0      # segundos de audio de todo el lote
         self._audio_done = 0.0       # segundos ya transcritos
         self._processing = False
+        # Descarga de YouTube en curso: (fraccion, etiqueta). La barra es una
+        # sola, asi que mientras no haya nada transcribiendose la ocupa la
+        # descarga; si hay transcripcion, esa manda y la descarga se sigue por
+        # el registro.
+        self._download: Optional[tuple] = None
         self._eta_shown: Optional[float] = None   # cuenta atras suavizada
 
         grid = QHBoxLayout(self)
@@ -144,9 +149,45 @@ class Footer(QWidget):
         self._eta.setText("")
         self._rate.stop()
 
+    def set_download(self, fraccion: float, etiqueta: str) -> None:
+        """Muestra el avance de una descarga en la misma barra.
+
+        Hasta ahora una descarga de YouTube solo dejaba lineas en el registro:
+        con un video largo parecia que Lexa se habia quedado colgada.
+        """
+        self._download = (max(0.0, min(1.0, fraccion)), etiqueta)
+        if not self._processing:
+            self._paint_download()
+
+    def clear_download(self) -> None:
+        self._download = None
+        if not self._processing:
+            self._reset_bar()
+
+    def _paint_download(self) -> None:
+        if self._download is None:
+            return
+        fraccion, etiqueta = self._download
+        self._bar.set_progress(fraccion)
+        self._pct.setText(f"{int(fraccion * 100)}%")
+        self._status.setText(etiqueta)
+        self._status.setToolTip("Descarga de YouTube")
+        self._dot.set_active(True)
+        self._eta.setText("")
+
+    def _reset_bar(self) -> None:
+        self._bar.set_progress(0)
+        self._pct.setText("0%")
+        self._status.setText("Listo")
+        self._status.setToolTip("")
+        self._dot.set_active(False)
+        self._eta.setText("")
+
     def update_files(self, items: List[FileItem]) -> None:
         if not items:
             self._reset()
+            if self._download is not None:
+                self._paint_download()
             return
 
         total = len(items)
@@ -188,6 +229,11 @@ class Footer(QWidget):
             self._status.setToolTip(current.name)
             self._dot.set_active(True)
             self._update_eta(overall)
+        elif self._download is not None:
+            # Nada transcribiendose pero si bajando: la barra es de la descarga.
+            # Va antes que «Completado» a proposito: si el lote ya termino y
+            # hay otro video bajando, lo que esta pasando es la descarga.
+            self._paint_download()
         elif done + errors >= total:
             self._status.setText("Completado" if not errors else f"Completado · {errors} error(es)")
             self._dot.set_active(False)

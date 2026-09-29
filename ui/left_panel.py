@@ -8,7 +8,7 @@ from PyQt6.QtGui import (
     QColor, QPainter, QBrush, QPen, QDragEnterEvent, QDropEvent,
 )
 from PyQt6.QtWidgets import (
-    QFileDialog, QHBoxLayout, QLabel, QScrollArea, QSizePolicy,
+    QFileDialog, QGridLayout, QHBoxLayout, QLabel, QScrollArea, QSizePolicy,
     QVBoxLayout, QWidget, QFrame,
 )
 
@@ -31,6 +31,9 @@ class LeftPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        # Provisionales: en showEvent se ajustan a lo que el contenido pide de
+        # verdad. Un numero fijo deja de valer en cuanto cambia la fuente, la
+        # resolucion o el escalado de Windows, y entonces el texto se corta.
         self.setMinimumWidth(236)
         self.setMaximumWidth(420)
 
@@ -89,6 +92,27 @@ class LeftPanel(QWidget):
 
         self._rows: Dict[int, FileRow] = {}
         self._selected: int | None = None
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._ajustar_minimo()
+
+    def _ajustar_minimo(self) -> None:
+        """El ancho minimo sale de lo que pide la zona de entrada, no de un
+        numero escrito a mano.
+
+        Con 236 fijos, los dos botones se quedaban sin sitio y el texto salia
+        cortado —«legir archivo»—. Y el numero correcto no existe: depende de
+        la fuente, del idioma y del escalado de Windows. Midiendolo se acierta
+        en cualquier equipo.
+        """
+        sobra = self.width() - self.dropzone.width()   # marcos y margenes
+        if sobra < 0:
+            return
+        necesario = self.dropzone.minimumSizeHint().width() + sobra
+        if necesario > self.minimumWidth():
+            self.setMaximumWidth(max(self.maximumWidth(), necesario))
+            self.setMinimumWidth(necesario)
 
     # ── API pública ──────────────────────────────────────────────────────────
     def add_file(self, item: FileItem) -> None:
@@ -179,7 +203,8 @@ class Dropzone(QWidget):
         )
         lay.addWidget(title)
 
-        hint = QLabel("Audio · Video · Imágenes · PDF\nTambién carpetas completas")
+        hint = QLabel("Audio · Video · Imágenes · PDF\n"
+                      "Carpetas completas y enlaces de YouTube")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hint.setWordWrap(True)
         hint.setStyleSheet(
@@ -187,23 +212,70 @@ class Dropzone(QWidget):
         )
         lay.addWidget(hint)
 
-        botones = QHBoxLayout()
-        botones.setSpacing(6)
-        botones.addStretch()
+        # Los dos botones se ponen en fila si caben y uno encima del otro si
+        # no. En fila fija se les cortaba el texto —«legir archivo»— en cuanto
+        # el panel se estrechaba, y el panel se estrecha en cuanto la pantalla
+        # es pequena o el usuario arrastra el separador.
+        self._btn_grid = QGridLayout()
+        self._btn_grid.setSpacing(6)
+        self._btn_grid.setContentsMargins(0, 0, 0, 0)
+        self._btn_grid.setColumnStretch(0, 1)
+        self._btn_grid.setColumnStretch(3, 1)
+
         self._btn = make_btn("Elegir archivos", kind="ghost_sm")
         self._btn.setFixedHeight(28)
         self._btn.clicked.connect(self._open_dialog)
-        botones.addWidget(self._btn)
 
         self._link_btn = make_btn("Pegar enlace", kind="ghost_sm")
         self._link_btn.setFixedHeight(28)
         self._link_btn.setToolTip("Descargar un vídeo de YouTube y transcribirlo")
         self._link_btn.clicked.connect(lambda: self.link_dropped.emit(""))
-        botones.addWidget(self._link_btn)
-        botones.addStretch()
-        lay.addLayout(botones)
+
+        self._apilado = None
+        self._colocar_botones(False)
+        lay.addLayout(self._btn_grid)
 
         self._update_style()
+
+    def _colocar_botones(self, apilado: bool) -> None:
+        if self._apilado == apilado:
+            return
+        self._apilado = apilado
+        for b in (self._btn, self._link_btn):
+            self._btn_grid.removeWidget(b)
+        if apilado:
+            self._btn_grid.addWidget(self._btn, 0, 0, 1, 4)
+            self._btn_grid.addWidget(self._link_btn, 1, 0, 1, 4)
+        else:
+            self._btn_grid.addWidget(self._btn, 0, 1)
+            self._btn_grid.addWidget(self._link_btn, 0, 2)
+
+    def minimumSizeHint(self):
+        """Lo mas estrecho que puede ponerse sin cortar nada: los dos botones
+        apilados, uno debajo del otro.
+
+        Hay que decirlo a mano porque el QGridLayout, cuando los tiene en fila,
+        pide la suma de los dos anchos y obligaria al panel a ser absurdamente
+        ancho; y si no se dice nada, el panel se encoge por debajo de lo que
+        cabe y el texto sale cortado.
+        """
+        base = super().minimumSizeHint()
+        margenes = self.layout().contentsMargins()
+        base.setWidth(max(self._btn.sizeHint().width(),
+                          self._link_btn.sizeHint().width())
+                      + margenes.left() + margenes.right())
+        return base
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        margenes = self.layout().contentsMargins()
+        hueco = self.width() - margenes.left() - margenes.right()
+        # sizeHint() es el ancho que el boton necesita para enseñar su texto
+        # entero, y no cambia aunque ahora mismo este aplastado.
+        necesario = (self._btn.sizeHint().width()
+                     + self._link_btn.sizeHint().width()
+                     + self._btn_grid.horizontalSpacing())
+        self._colocar_botones(necesario > hueco)
 
     def _update_style(self) -> None:
         border = T.ACCENT if self._hovering else T.LINE
