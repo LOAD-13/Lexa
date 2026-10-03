@@ -16,8 +16,70 @@ from ui.widgets import make_btn
 from core.paths import resource
 
 
+class _ModeSwitch(QWidget):
+    """Conmutador de modo: dos pastillas en una capsula.
+
+    Dos botones sueltos no dejan claro que son lo mismo y que solo uno manda a
+    la vez. En una capsula con el elegido resaltado se lee de un vistazo.
+    """
+
+    changed = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("ModeSwitch")
+        self.setStyleSheet(
+            f"QWidget#ModeSwitch {{ background: {T.BG}; border: 1px solid {T.LINE};"
+            f" border-radius: 9px; }}")
+        fila = QHBoxLayout(self)
+        fila.setContentsMargins(3, 3, 3, 3)
+        fila.setSpacing(3)
+
+        self._botones = {}
+        for clave, texto in (("transcribir", "Transcribir"), ("comprimir", "Comprimir")):
+            b = make_btn(texto, kind="ghost_sm")
+            b.setFixedHeight(24)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(lambda _=False, c=clave: self._elegir(c))
+            self._botones[clave] = b
+            fila.addWidget(b)
+        self._actual = "transcribir"
+        self._pintar()
+
+    def mode(self) -> str:
+        return self._actual
+
+    def set_mode(self, clave: str, avisar: bool = False) -> None:
+        if clave not in self._botones or clave == self._actual:
+            return
+        self._actual = clave
+        self._pintar()
+        if avisar:
+            self.changed.emit(clave)
+
+    def _elegir(self, clave: str) -> None:
+        if clave == self._actual:
+            return
+        self.set_mode(clave, avisar=True)
+
+    def _pintar(self) -> None:
+        for clave, b in self._botones.items():
+            if clave == self._actual:
+                b.setStyleSheet(
+                    f"QPushButton {{ background: {T.ACCENT}; color: {T.ACCENT_TEXT};"
+                    f" border: none; border-radius: 6px; font-size: 12px;"
+                    f" font-weight: 600; padding: 3px 14px; }}")
+            else:
+                b.setStyleSheet(
+                    f"QPushButton {{ background: transparent; color: {T.MUTED};"
+                    f" border: none; border-radius: 6px; font-size: 12px;"
+                    f" padding: 3px 14px; }}"
+                    f"QPushButton:hover {{ color: {T.FG}; background: {T.PANEL2}; }}")
+
+
 class TitleBar(QWidget):
     help_requested = pyqtSignal()
+    mode_changed = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -66,6 +128,14 @@ class TitleBar(QWidget):
             f"background: transparent; color: {T.MUTED}; font-size: 12px;"
         )
         row.addWidget(self._batch_lbl)
+
+        row.addStretch()
+
+        # El conmutador va en medio: es lo que cambia toda la pantalla, asi que
+        # no puede esconderse en una esquina junto a la ayuda.
+        self.mode_switch = _ModeSwitch()
+        self.mode_switch.changed.connect(self.mode_changed)
+        row.addWidget(self.mode_switch)
 
         row.addStretch()
 

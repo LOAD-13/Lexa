@@ -2,7 +2,7 @@
 from __future__ import annotations
 import os
 import re
-from typing import List
+from typing import List, Optional
 
 from core.models import AppConfig, FileItem, FileKind
 from core.paths import resource
@@ -16,17 +16,26 @@ class NothingToExportError(RuntimeError):
     """No hay ningun resultado exportable con la configuracion actual."""
 
 
-def exportable(items: List[FileItem], config: AppConfig) -> List[FileItem]:
-    """Items con contenido real. Un resultado vacio no genera archivo."""
+def exportable(items: List[FileItem], config: AppConfig,
+               incluir_guardados: bool = True) -> List[FileItem]:
+    """Items con contenido real. Un resultado vacio no genera archivo.
+
+    Con `incluir_guardados=False` se dejan fuera los que ya se escribieron al
+    terminar. Sin eso, la exportacion de cierre los repetiria y, como el nombre
+    se desambigua solo, iria dejando «archivo (2).txt», «archivo (3).txt».
+    """
     out = [f for f in items if f.segments and (f.result or "").strip()]
+    if not incluir_guardados:
+        out = [f for f in out if not f.exported_path]
     if config.export_format in SUBTITLE_FORMATS:
         out = [f for f in out if f.kind.is_speech]
     return out
 
 
-def export_results(items: List[FileItem], config: AppConfig) -> List[str]:
+def export_results(items: List[FileItem], config: AppConfig,
+                   incluir_guardados: bool = True) -> List[str]:
     """Exporta los resultados. Devuelve las rutas creadas."""
-    done = exportable(items, config)
+    done = exportable(items, config, incluir_guardados)
     if not done:
         if config.export_format in SUBTITLE_FORMATS:
             raise NothingToExportError(
@@ -45,8 +54,31 @@ def export_results(items: List[FileItem], config: AppConfig) -> List[str]:
         # primer archivo del lote, que es el que abre la tanda.
         return [_export_merged(done, config, _ensure_dir(output_dir_for(done[0], config)))]
 
-    return [_export_single(item, config, _ensure_dir(output_dir_for(item, config)))
-            for item in done]
+    rutas = []
+    for item in done:
+        ruta = _export_single(item, config, _ensure_dir(output_dir_for(item, config)))
+        item.exported_path = ruta
+        rutas.append(ruta)
+    return rutas
+
+
+def export_one(item: FileItem, config: AppConfig) -> Optional[str]:
+    """Guarda un solo archivo en cuanto termina. None si todavia no toca.
+
+    Devuelve None —sin considerarlo un fallo— cuando ese archivo no da para
+    exportar, cuando ya se guardo, o cuando el modo es documento combinado: un
+    documento unico necesita todos los resultados y solo puede escribirse al
+    final.
+    """
+    if config.output_mode == "merged" and config.export_format not in SUBTITLE_FORMATS:
+        return None
+    if item.exported_path:
+        return None
+    if not exportable([item], config):
+        return None
+    ruta = _export_single(item, config, _ensure_dir(output_dir_for(item, config)))
+    item.exported_path = ruta
+    return ruta
 
 
 def output_dir_for(item: FileItem, config: AppConfig) -> str:

@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget,
 )
 
+from core import suspension
 from core.models import FileItem, FileStatus, LogEntry
 from ui import theme as T
 
@@ -139,7 +140,7 @@ class Footer(QWidget):
 
     # ── API pública ──────────────────────────────────────────────────────────
     def mark_started(self) -> None:
-        self._started_at = time.monotonic()
+        self._started_at = suspension.ahora()
         self._last_progress = 0.0
         self._eta_shown = None
         self._rate.start()
@@ -277,7 +278,7 @@ class Footer(QWidget):
             remaining = pending / rate
         elif progress > 0.02:
             # Sin duracion conocida (imagenes, PDF) se extrapola el progreso.
-            elapsed = time.monotonic() - self._started_at
+            elapsed = suspension.ahora() - self._started_at
             remaining = elapsed / progress - elapsed
 
         if remaining is None:
@@ -381,7 +382,7 @@ class RateChart(QWidget):
         if self._first_progress is None:
             return 0.0
         t0, audio0 = self._first_progress
-        elapsed = time.monotonic() - t0
+        elapsed = suspension.ahora() - t0
         # Por debajo de unos segundos el cociente se dispara (la primera rafaga
         # llega entera de golpe) y daba estimaciones absurdamente optimistas.
         if elapsed < _RATE_MIN_ELAPSED:
@@ -392,7 +393,7 @@ class RateChart(QWidget):
 
     # -- Interno --------------------------------------------------------------
     def _tick(self) -> None:
-        now = time.monotonic()
+        now = suspension.ahora()
         if self._first_progress is None and self._audio_secs > 0:
             self._first_progress = (now, self._audio_secs)
         self._history.append((now, self._audio_secs))

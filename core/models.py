@@ -62,6 +62,9 @@ class FileItem:
     # Enlace del que salio el archivo, si vino de YouTube. Sirve para no
     # descargar dos veces el mismo video.
     source_url: Optional[str] = None
+    # Donde quedo guardado su resultado. Se escribe en cuanto el archivo
+    # termina, y sirve para que la exportacion de cierre no lo repita.
+    exported_path: Optional[str] = None
 
     @property
     def name(self) -> str:
@@ -175,6 +178,10 @@ class AppConfig:
     # Ultima version que llego a abrirse. Si al arrancar no coincide con la
     # actual, es que se acaba de actualizar y toca ensenar las novedades.
     last_seen_version: str = ""
+    # Modo con el que se abrio por ultima vez: transcribir | comprimir
+    last_mode: str = "transcribir"
+    # Tamano al que se comprimen las imagenes y los PDF, en KB.
+    compress_target_kb: int = 75
     window_geometry: str = ""                 # base64 de QByteArray
     h_splitter: list = field(default_factory=list)
     v_splitter: list = field(default_factory=list)

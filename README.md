@@ -7,7 +7,7 @@
 **Convierte audio, video, imágenes y PDFs en texto. Todo en tu computadora.**
 
 <p>
-<img alt="Versión" src="https://img.shields.io/badge/versión-2.0.1-6ec99a?style=flat-square&labelColor=1c1f24">
+<img alt="Versión" src="https://img.shields.io/badge/versión-2.1.0-6ec99a?style=flat-square&labelColor=1c1f24">
 <img alt="Plataforma" src="https://img.shields.io/badge/PLATAFORMA-WINDOWS-0078d4?style=flat-square&labelColor=1c1f24">
 <img alt="Python" src="https://img.shields.io/badge/Python-3.10+-3776ab?style=flat-square&labelColor=1c1f24">
 <img alt="PyQt6" src="https://img.shields.io/badge/PyQt6-6.6-41cd52?style=flat-square&labelColor=1c1f24">
@@ -38,6 +38,7 @@ Sin cuentas, sin API keys, sin subir nada a internet.
 | **Imágenes** — jpg, png, webp, tiff | Texto reconocido con OCR, respetando el orden de lectura |
 | **PDF** — nativos y escaneados | Texto embebido cuando existe; OCR página a página cuando la letra es una imagen |
 | **YouTube** — pegando el enlace | Descarga el vídeo y lo transcribe como cualquier otro archivo |
+| **Imágenes y PDF que pesan mucho** | Los comprime al tamaño que le digas, dejando el original intacto |
 
 Además:
 
@@ -45,6 +46,10 @@ Además:
   dentro de la misma ventana. Arrastra sobre la onda para marcar un tramo,
   ajusta sus bordes, marca varios del mismo archivo. Los tiempos del resultado
   siguen siendo los del original.
+- **Cada resultado se guarda al terminar su archivo**, sin esperar al resto de
+  la cola.
+- **No deja que el equipo se suspenda** mientras trabaja. La pantalla sí se
+  apaga: lo que se bloquea es la suspensión del sistema.
 - **Cola de trabajo** — suelta todos los archivos que quieras y se procesan uno
   tras otro. Los que añadas mientras ya está trabajando se recogen al terminar
   con el actual.
@@ -78,6 +83,7 @@ flowchart TD
     EX["core/exporter.py"]
     UP["core/updater.py<br/>GitHub Releases"]
     YT["core/youtube.py<br/>yt-dlp + QuickJS"]
+    CO["core/compress.py<br/>Pillow + PyMuPDF"]
 
     YT -->|"mp4 descargado"| UI
     UI -->|"FileItem[] + AppConfig"| W
@@ -114,7 +120,7 @@ instalar nada.
 Verifica la descarga contra el `SHA256SUMS.txt` de la Release:
 
 ```powershell
-Get-FileHash .\Lexa-2.0.1-windows-x64.zip -Algorithm SHA256
+Get-FileHash .\Lexa-2.1.0-windows-x64.zip -Algorithm SHA256
 ```
 
 A partir de la 1.3.3, Lexa comprueba al arrancar si hay versión nueva y la
@@ -192,7 +198,7 @@ no depende de cuál sea el `python` del PATH. Al terminar deja en `dist/`:
 | Archivo | Para qué |
 |---|---|
 | `Lexa/` | La carpeta ejecutable |
-| `Lexa-2.0.1-windows-x64.zip` | Paquete de distribución e instalación limpia |
+| `Lexa-2.1.0-windows-x64.zip` | Paquete de distribución e instalación limpia |
 | `SHA256SUMS.txt` | Hashes que verifica el actualizador |
 
 Se construye en modo **onedir** a propósito: con `onefile`, Windows descomprime
@@ -217,6 +223,7 @@ El zip completo solo hace falta cuando cambian las librerías.
 | Caché de transcripciones | `%LOCALAPPDATA%\Lexa\cache` (tope 200 MB, se poda sola) |
 | Actualizaciones descargadas | `%LOCALAPPDATA%\Lexa\updates` |
 | Vídeos bajados de YouTube | `%LOCALAPPDATA%\Lexa\youtube` (se vacía desde los ajustes) |
+| Imágenes y PDF comprimidos | Junto al original, con «(comprimido)» en el nombre |
 | Configuración | `%APPDATA%\Lexa\config.json` |
 | Log de errores de arranque | `%APPDATA%\Lexa\error.log` |
 | Resultados | Junto al archivo original, o la carpeta que elijas |

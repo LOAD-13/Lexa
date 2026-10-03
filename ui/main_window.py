@@ -9,7 +9,7 @@ from typing import List, Optional
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
-    QHBoxLayout, QMainWindow, QMessageBox, QSplitter,
+    QHBoxLayout, QMainWindow, QMessageBox, QSplitter, QStackedWidget,
     QVBoxLayout, QWidget,
 )
 
@@ -19,7 +19,8 @@ from core.models import (
 )
 from core.config_store import save_config
 from core.worker import ProcessingWorker
-from core.exporter import export_results, NothingToExportError
+from core.suspension import Vigilia
+from core.exporter import export_one, export_results, NothingToExportError
 from core.paths import resource
 from ui import theme as T
 from ui.title_bar import TitleBar
@@ -27,6 +28,7 @@ from ui.left_panel import LeftPanel
 from ui.center_panel import CenterPanel
 from ui.right_panel import RightPanel
 from ui.footer import Footer
+from ui.compress_panel import CompressPanel
 from ui.tour import TourOverlay, build_steps, build_whats_new_steps
 from ui.update_banner import UpdateBanner, UpdateCheckThread, UpdateDownloadThread
 from ui.update_dialog import UpdateDialog
@@ -49,6 +51,8 @@ class MainWindow(QMainWindow):
         self._pending_update = None
         self._yt_thread: Optional[YoutubeDownloadThread] = None
         self._yt_last_pct = -1
+        self._aviso_combinado = False
+        self._vigilias = set()
 
         self.setWindowTitle("Lexa")
         # Mínimo holgado: por debajo de esto los paneles dejan de ser legibles,
@@ -71,6 +75,7 @@ class MainWindow(QMainWindow):
 
         self._title_bar = TitleBar()
         self._title_bar.help_requested.connect(self.start_tour)
+        self._title_bar.mode_changed.connect(self.set_mode)
         root.addWidget(self._title_bar)
 
         self._banner = UpdateBanner()
@@ -98,12 +103,24 @@ class MainWindow(QMainWindow):
         self._h_splitter.setStretchFactor(2, 0)
         self._h_splitter.setSizes([292, 700, 320])
 
+        # Las dos pantallas viven en una pila: comprimir no es transcribir y
+        # tenerlas a la vez obligaria a repartir el sitio entre las dos.
+        self._compress = CompressPanel(self._config)
+        self._compress.log.connect(self._log)
+        self._compress.avance.connect(self._on_compress_avance)
+        self._compress.trabajando.connect(self._on_compress_trabajando)
+
+        self._stack = QStackedWidget()
+        self._stack.setStyleSheet("background: transparent;")
+        self._stack.addWidget(self._h_splitter)      # 0: transcribir
+        self._stack.addWidget(self._compress)        # 1: comprimir
+
         content = QWidget()
         content.setStyleSheet("background: transparent;")
         content_lay = QHBoxLayout(content)
         content_lay.setContentsMargins(10, 10, 10, 4)
         content_lay.setSpacing(0)
-        content_lay.addWidget(self._h_splitter)
+        content_lay.addWidget(self._stack)
 
         # ── Contenido / pie, también redimensionable ─────────────────
         self._footer = Footer()
@@ -128,6 +145,8 @@ class MainWindow(QMainWindow):
 
         self._connect()
         self._restore_layout()
+        if getattr(self._config, "last_mode", "transcribir") == "comprimir":
+            self.set_mode("comprimir")
 
     def _connect(self) -> None:
         self._left.files_added.connect(self._on_files_added)
@@ -167,6 +186,35 @@ class MainWindow(QMainWindow):
                     pass
         except Exception:
             pass   # cosmético: la app funciona igual con barra clara
+
+    # ── Modos ────────────────────────────────────────────────────────────────
+    def set_mode(self, modo: str) -> None:
+        """Cambia entre transcribir y comprimir."""
+        comprimir = modo == "comprimir"
+        self._stack.setCurrentIndex(1 if comprimir else 0)
+        self._title_bar.mode_switch.set_mode(modo)
+        self._config.last_mode = "comprimir" if comprimir else "transcribir"
+        if comprimir:
+            self._title_bar.set_batch_name("Comprimir imágenes y PDF")
+        else:
+            self._sync_views()
+
+    def _on_compress_avance(self, fraccion: float, etiqueta: str) -> None:
+        # Se reaprovecha la barra del pie: es la misma pregunta —cuanto falta—
+        # y tener dos barras distintas segun el modo seria confuso.
+        if fraccion >= 1.0:
+            self._footer.clear_download()
+        else:
+            self._footer.set_download(fraccion, etiqueta)
+
+    def _on_compress_trabajando(self, activo: bool) -> None:
+        # Comprimir cien fotos tampoco es momento de que el equipo se duerma.
+        self._vigilia("comprimir", activo)
+        if activo:
+            self._title_bar.set_status("Comprimiendo…", T.WARN)
+        else:
+            self._title_bar.set_status("Listo", T.ACCENT)
+            self._footer.clear_download()
 
     # ── Tour ─────────────────────────────────────────────────────────────────
     def maybe_start_tour(self) -> None:
@@ -372,6 +420,7 @@ class MainWindow(QMainWindow):
         self._yt_thread.notice.connect(self._log)
         self._yt_thread.all_done.connect(self._on_yt_all_done)
         self._yt_thread.start()
+        self._vigilia("youtube", True)
         self._footer.set_download(0.0, "Preparando la descarga")
         self._log("info", "Descargando de YouTube"
                           + ("" if con_video else " (solo el audio)"))
@@ -388,6 +437,7 @@ class MainWindow(QMainWindow):
 
     def _on_yt_all_done(self) -> None:
         """No quedan descargas: la barra vuelve a ser de la transcripcion."""
+        self._vigilia("youtube", False)
         self._footer.clear_download()
         self._sync_views()
 
@@ -529,10 +579,16 @@ class MainWindow(QMainWindow):
         if not self._ensure_models():
             return
 
+        if only is None:
+            self._last_export = []
         self._processing = True
         self._right.set_processing(True)
         self._title_bar.set_status("Procesando…", T.WARN)
         self._footer.mark_started()
+        # Transcribir no cuenta como actividad para Windows: sin esto el equipo
+        # se suspende a los quince minutos aunque este a pleno rendimiento.
+        self._vigilia("proceso", True)
+        self._aviso_combinado = False
 
         for item in pending:
             item.status = FileStatus.PENDING
@@ -567,6 +623,7 @@ class MainWindow(QMainWindow):
         return True
 
     def _stop_worker(self) -> None:
+        self._vigilia("proceso", False)
         if self._worker is not None:
             self._worker.abort()
             self._worker.wait(8000)
@@ -611,6 +668,45 @@ class MainWindow(QMainWindow):
         item.duration = duration
         self._left.update_file(item)
         self._sync_views()
+        self._guardar_ya(item)
+
+    def _vigilia(self, quien: str, activa: bool) -> None:
+        """Abre o cierra la vigilia de un trabajo concreto.
+
+        Con el nombre de quien la pide, abrirla dos veces no la cuenta dos
+        veces y cerrarla dos veces no suelta la del otro trabajo: transcribir y
+        descargar de YouTube se solapan, y que uno acabe no significa que el
+        otro haya terminado.
+        """
+        if activa:
+            if quien not in self._vigilias:
+                self._vigilias.add(quien)
+                Vigilia.abrir()
+        elif quien in self._vigilias:
+            self._vigilias.discard(quien)
+            Vigilia.cerrar()
+
+    def _guardar_ya(self, item: FileItem) -> None:
+        """Escribe el resultado sin esperar a que acabe el lote.
+
+        Quien deja cinco audios y se va no tenia nada en disco hasta el ultimo;
+        si cerraba Lexa antes, perdia lo ya transcrito.
+        """
+        if not self._config.auto_export:
+            return
+        try:
+            ruta = export_one(item, self._config)
+        except Exception as exc:
+            self._log("err", f"No se pudo guardar {item.name}: {exc}")
+            return
+        if ruta:
+            self._last_export.append(ruta)
+            self._log("ok", f"Guardado {os.path.basename(ruta)}")
+        elif self._config.output_mode == "merged" and not self._aviso_combinado:
+            # Solo la primera vez: si no, parece que guardar sobre la marcha
+            # no funciona, cuando lo que pasa es que en este modo no aplica.
+            self._aviso_combinado = True
+            self._log("info", "Documento combinado: se guardará al terminar todo")
 
     def _on_file_error(self, file_id: int, error: str) -> None:
         item = self._find(file_id)
@@ -625,6 +721,9 @@ class MainWindow(QMainWindow):
 
     def _on_all_done(self, aborted: bool) -> None:
         self._processing = False
+        # Se suelta aqui aunque vaya a encadenarse otra tanda: esa vuelve a
+        # pedirla al arrancar, y asi no queda colgada si no hay mas trabajo.
+        self._vigilia("proceso", False)
         self._right.set_processing(False)
         self._footer.mark_stopped()
 
@@ -650,7 +749,15 @@ class MainWindow(QMainWindow):
             return
 
         if done and self._config.auto_export:
-            self._export(manual=False)
+            # Lo guardado sobre la marcha ya esta en disco: solo queda lo que
+            # no pudo guardarse archivo a archivo —el documento combinado— y
+            # cualquier rezagado. Reexportarlo todo dejaria duplicados.
+            from core.exporter import exportable
+            if exportable(self._files, self._config, incluir_guardados=False):
+                self._export(manual=False)
+            elif self._last_export:
+                self._log("ok", f"Guardado: {len(self._last_export)} archivo(s) "
+                                f"en {os.path.dirname(self._last_export[0])}")
 
         if errors:
             self._title_bar.set_status(f"{errors} error(es)", T.WARN)
@@ -662,7 +769,10 @@ class MainWindow(QMainWindow):
     # ── Exportación ──────────────────────────────────────────────────────────
     def _export(self, manual: bool) -> None:
         try:
-            paths = export_results(self._files, self._config)
+            # A mano se exporta todo, que para eso lo pide; automatica solo lo
+            # que falte, para no duplicar lo ya guardado al vuelo.
+            paths = export_results(self._files, self._config,
+                                   incluir_guardados=manual)
         except NothingToExportError as exc:
             if manual:
                 QMessageBox.information(self, "Nada que exportar", str(exc))
@@ -675,7 +785,11 @@ class MainWindow(QMainWindow):
             self._log("err", f"Error al exportar: {exc}")
             return
 
-        self._last_export = paths
+        # Se suma a lo ya guardado archivo a archivo en vez de reemplazarlo:
+        # si no, «Abrir carpeta» y el recuento perderian esos resultados.
+        for ruta in paths:
+            if ruta not in self._last_export:
+                self._last_export.append(ruta)
         self._log("ok", f"Guardado: {len(paths)} archivo(s) en {self._config.save_location}")
 
         if manual:
@@ -758,6 +872,11 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
             self._stop_worker()
+        if self._compress.ocupado():
+            self._compress.detener()
+        # Dejar al equipo sin poder suspenderse despues de cerrar Lexa seria
+        # peor que el problema que esto arregla.
+        Vigilia.soltar_todo()
         # Una descarga a medias no puede quedarse viva detras de la ventana.
         if self._yt_thread is not None and self._yt_thread.isRunning():
             self._yt_thread.abort()

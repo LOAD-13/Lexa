@@ -14,6 +14,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 from dataclasses import replace
 
+from core import suspension
 from core.models import AppConfig, FileItem, FileKind, FileStatus, LogEntry, Segment
 from core import formatter as F
 
@@ -47,7 +48,7 @@ class ProcessingWorker(QThread):
 
             self.file_started.emit(item.id)
             self._log("info", f"Iniciando {item.name}")
-            started_at = time.monotonic()
+            started_at = suspension.ahora()
 
             try:
                 if item.kind.is_speech:
@@ -64,7 +65,7 @@ class ProcessingWorker(QThread):
                     include_speakers=self.config.include_speakers,
                     is_visual=item.kind.is_visual,
                 )
-                elapsed = time.monotonic() - started_at
+                elapsed = suspension.ahora() - started_at
                 self.file_done.emit(item.id, segments, text, duration)
 
                 words = F.word_count(text)
